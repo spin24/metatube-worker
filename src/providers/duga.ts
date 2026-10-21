@@ -1,6 +1,8 @@
 // DUGA — port of provider/duga from metatube-sdk-go.
-// Info: duga.jp PPV page scrape. Search: the results page only lists
-// IDs, and like the Go version the top 3 are resolved to full info.
+// Info: duga.jp PPV page scrape. Search: duga.jp's own search
+// endpoint answers 503 to datacenter egress, so search relays
+// through public search engines (see lib/engines.ts) with a learned
+// number -> slug fast path; candidate slugs resolve to full info.
 
 import {
   MovieInfo,
@@ -20,10 +22,44 @@ import {
   fetchPage,
 } from "../lib/scrape";
 import { isSpecial, parseRuntime, parseScore } from "../lib/textutil";
+import { compareStrings } from "../lib/textutil";
+import { raceSearchEngines } from "../lib/engines";
 import { parseDateLoose } from "../lib/scrape";
 
 const MOVIE_URL = "https://duga.jp/ppv/%s/";
 const SEARCH_URL = "https://duga.jp/search/=/q=%s/";
+
+// Learned mappings for the search relay (module state, per isolate):
+// DUGA's own search endpoint answers 503 to datacenter egress, so
+// search goes through public search engines like AVE's. A verified
+// number -> slug mapping never changes, so repeat lookups skip the
+// flaky engines entirely.
+const learnedNumbers = new Map<string, string>();
+const learnedKeywords = new Map<string, string[]>();
+
+function normNum(s: string): string {
+  return s.toUpperCase().replace(/[-_\s]/g, "");
+}
+
+/** Candidate DUGA slugs from a search-engine results page. */
+export function parseDugaCandidateSlugs(html: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const re = /duga\.jp(?:%2F|\/)ppv(?:%2F|\/)([a-z0-9][a-z0-9-]*)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const slug = m[1].toLowerCase();
+    // Work slugs are label-number ("glory-0046"); bare labels are
+    // listing pages, not works.
+    if (!/^[a-z]+-\d+$/.test(slug)) continue;
+    if (!seen.has(slug)) {
+      seen.add(slug);
+      ids.push(slug);
+      if (ids.length >= 8) break;
+    }
+  }
+  return ids;
+}
 
 export async function parseDugaPage(
   html: string,
@@ -174,6 +210,9 @@ export const dugaProvider: MovieProvider & MovieSearcher = {
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
     }
+    // Teach the search fast path: number -> URL slug (info.id may
+    // have been overwritten by the page's numeric work ID).
+    if (info.number) learnedNumbers.set(normNum(info.number), id);
     return info;
   },
 
@@ -183,19 +222,79 @@ export const dugaProvider: MovieProvider & MovieSearcher = {
   },
 
   async searchMovie(keyword: string): Promise<MovieSearchResult[]> {
-    const url = SEARCH_URL.replace("%s", encodeURIComponent(keyword));
-    const r = await fetchPage(url, { providerName: "DUGA" });
-    const ids = await parseDugaSearchIDs(r.text, url);
-    // Like the Go version: resolve only the top 3 hits to full info.
-    const settled = await Promise.allSettled(
-      ids.slice(0, 3).map((id) => dugaProvider.getMovieInfoByID(id)),
-    );
-    const results: MovieSearchResult[] = [];
-    for (const s of settled) {
-      if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
-        results.push(movieInfoToSearchResult(s.value));
+    const kwNorm = normNum(keyword);
+    const slugLike = /^[a-z]+-\d+$/i.test(keyword.trim());
+
+    // Fast paths: DUGA ids ARE readable slugs, so a slug-like keyword
+    // resolves directly; a known number resolves via the learned map.
+    const direct = slugLike
+      ? keyword.trim().toLowerCase()
+      : learnedNumbers.get(kwNorm);
+    if (direct) {
+      try {
+        const info = await dugaProvider.getMovieInfoByID(direct);
+        if (isValidMovieInfo(info)) return [movieInfoToSearchResult(info)];
+      } catch {
+        // fall through to the relay
       }
     }
-    return results;
+
+    let ids = await raceSearchEngines(
+      "DUGA",
+      [`site:duga.jp ${keyword}`, `site:duga.jp ${keyword}`, `duga.jp ${keyword}`],
+      parseDugaCandidateSlugs,
+    );
+    if (ids.length === 0) ids = learnedKeywords.get(kwNorm) ?? [];
+    if (ids.length === 0) {
+      // Last resort: the site's own search (503s from some egress).
+      try {
+        const url = SEARCH_URL.replace("%s", encodeURIComponent(keyword));
+        const r = await fetchPage(url, { providerName: "DUGA" });
+        ids = await parseDugaSearchIDs(r.text, url);
+      } catch {
+        ids = [];
+      }
+    }
+    if (ids.length === 0) return [];
+
+    const top = ids.slice(0, 5);
+    const settled = await Promise.allSettled(
+      top.map((id) => dugaProvider.getMovieInfoByID(id)),
+    );
+    const pairs: { slug: string; info: MovieInfo }[] = [];
+    settled.forEach((s, i) => {
+      if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
+        pairs.push({ slug: top[i], info: s.value });
+      }
+    });
+    learnedKeywords.set(kwNorm, ids.slice(0, 8));
+    for (const p of pairs) {
+      if (p.info.number) learnedNumbers.set(normNum(p.info.number), p.slug);
+    }
+    const infos = pairs.map((p) => p.info);
+
+    let kept = infos;
+    const numberLike = slugLike || /^[A-Z]+\d+$/.test(kwNorm) || /^\d+$/.test(kwNorm);
+    if (numberLike) {
+      const exact = infos.filter((i) => normNum(i.number) === kwNorm);
+      if (exact.length > 0) {
+        kept = exact;
+      } else {
+        const near = infos.filter(
+          (i) => compareStrings(normNum(i.number), kwNorm) >= 0.8,
+        );
+        if (near.length > 0) kept = near;
+      }
+    } else if (keyword) {
+      const sub = infos.filter(
+        (i) =>
+          i.title.includes(keyword) ||
+          i.summary.includes(keyword) ||
+          i.actors.some((a) => a.includes(keyword)) ||
+          i.genres.some((g) => g.includes(keyword)),
+      );
+      if (sub.length > 0) kept = sub;
+    }
+    return kept.map((i) => movieInfoToSearchResult(i));
   },
 };

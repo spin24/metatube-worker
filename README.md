@@ -141,7 +141,12 @@ handled there).
 ### Batch-2 providers (7)
 
 - **DUGA** info scrape (the page's 作品ID replaces the URL id, as in
-  Go); search resolves only the top 3 hits to full info, like Go.
+  Go). Its own search endpoint answers 503 to datacenter egress, so
+  search relays through web search engines like AVE's (shared
+  `lib/engines.ts`): `site:duga.jp` queries yield `/ppv/` work slugs
+  that resolve to full info and are verified by number; slug-shaped
+  keywords resolve directly, and verified number → slug mappings are
+  remembered per isolate.
 - **MGS** needs the `adc=1` cookie; the preview video comes from the
   sampleplayer JSON endpoint (ISM URL rewritten to .mp4). The Go
   version's BigThumbURL derivation is dropped — this port's MovieInfo
@@ -160,14 +165,22 @@ handled there).
 - **SOD** reproduces the age-gate flow (follow the enter link with
   the page as Referer, parse that body) and fails lookups whose cover
   is still the `now_*.jpg` placeholder, as Go does.
-- **JAVFREE** is FC2-only with dual IDs (`{post}-{number}`); search
-  results all carry the searched number, as in Go.
+- **JAVFREE** is FC2-only with dual IDs (`{post}-{number}`). The
+  front-end `?s=` search is WAF-gated from datacenter egress, so
+  search uses the site's WordPress REST API
+  (`/wp-json/wp/v2/search`), which returns post URLs directly;
+  a search-engine relay and the original `?s=` page remain as
+  fallbacks.
 - **FC2PPVDB** field rows have bare-text labels (`販売者：` etc.)
   followed by a span value, extracted by regex.
 
 Not yet verified from the dev sandbox (blocked there; first real
-test is production, as with batch 1): MGS, SOD, FC2PPVDB, and the
-DUGA / AVE / JAVFREE search paths.
+test is production, as with batch 1): MGS, SOD, FC2PPVDB. AVE's
+engine-relay search is verified live (flaky per request by nature;
+it leans on its learned-mapping fast path). The DUGA relay and
+JAVFREE wp-json search get their first live test with the deploy
+that ships them — their extractors are validated locally against
+real engine/REST responses.
 
 ### Actors (AV-LEAGUE)
 `GET /v1/actors/AV-LEAGUE/{id}`, `POST /v1/actors/AV-LEAGUE/lookup` and

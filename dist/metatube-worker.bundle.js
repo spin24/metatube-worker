@@ -5371,9 +5371,57 @@ var fc2hubProvider = {
   }
 };
 
+// src/lib/engines.ts
+var DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
+var DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
+var BING_URL = "https://www.bing.com/search?q=%s";
+async function raceSearchEngines(providerName, queryVariants, extract) {
+  for (const queryText of queryVariants) {
+    const q = encodeURIComponent(queryText);
+    const pages = await Promise.allSettled(
+      [DDG_URL, DDG_LITE_URL, BING_URL].map(
+        (template) => fetchText(template.replace("%s", q), {
+          providerName,
+          timeoutMs: 6e3
+        })
+      )
+    );
+    for (const page of pages) {
+      if (page.status !== "fulfilled") continue;
+      const found = extract(page.value.text);
+      if (found.length > 0) return found;
+    }
+  }
+  return [];
+}
+__name(raceSearchEngines, "raceSearchEngines");
+
 // src/providers/duga.ts
 var MOVIE_URL12 = "https://duga.jp/ppv/%s/";
 var SEARCH_URL6 = "https://duga.jp/search/=/q=%s/";
+var learnedNumbers = /* @__PURE__ */ new Map();
+var learnedKeywords = /* @__PURE__ */ new Map();
+function normNum(s) {
+  return s.toUpperCase().replace(/[-_\s]/g, "");
+}
+__name(normNum, "normNum");
+function parseDugaCandidateSlugs(html) {
+  const ids = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /duga\.jp(?:%2F|\/)ppv(?:%2F|\/)([a-z0-9][a-z0-9-]*)/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const slug = m[1].toLowerCase();
+    if (!/^[a-z]+-\d+$/.test(slug)) continue;
+    if (!seen.has(slug)) {
+      seen.add(slug);
+      ids.push(slug);
+      if (ids.length >= 8) break;
+    }
+  }
+  return ids;
+}
+__name(parseDugaCandidateSlugs, "parseDugaCandidateSlugs");
 async function parseDugaPage(html, pageURL, id) {
   const info = baseMovieInfo("DUGA", id, pageURL);
   const fields = await collectFields(html, [
@@ -5504,6 +5552,7 @@ var dugaProvider = {
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
     }
+    if (info.number) learnedNumbers.set(normNum(info.number), id);
     return info;
   },
   normalizeMovieKeyword(keyword) {
@@ -5511,19 +5560,66 @@ var dugaProvider = {
     return keyword.trim().toUpperCase();
   },
   async searchMovie(keyword) {
-    const url = SEARCH_URL6.replace("%s", encodeURIComponent(keyword));
-    const r = await fetchPage(url, { providerName: "DUGA" });
-    const ids = await parseDugaSearchIDs(r.text, url);
-    const settled = await Promise.allSettled(
-      ids.slice(0, 3).map((id) => dugaProvider.getMovieInfoByID(id))
-    );
-    const results = [];
-    for (const s of settled) {
-      if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
-        results.push(movieInfoToSearchResult(s.value));
+    const kwNorm = normNum(keyword);
+    const slugLike = /^[a-z]+-\d+$/i.test(keyword.trim());
+    const direct = slugLike ? keyword.trim().toLowerCase() : learnedNumbers.get(kwNorm);
+    if (direct) {
+      try {
+        const info = await dugaProvider.getMovieInfoByID(direct);
+        if (isValidMovieInfo(info)) return [movieInfoToSearchResult(info)];
+      } catch {
       }
     }
-    return results;
+    let ids = await raceSearchEngines(
+      "DUGA",
+      [`site:duga.jp ${keyword}`, `site:duga.jp ${keyword}`, `duga.jp ${keyword}`],
+      parseDugaCandidateSlugs
+    );
+    if (ids.length === 0) ids = learnedKeywords.get(kwNorm) ?? [];
+    if (ids.length === 0) {
+      try {
+        const url = SEARCH_URL6.replace("%s", encodeURIComponent(keyword));
+        const r = await fetchPage(url, { providerName: "DUGA" });
+        ids = await parseDugaSearchIDs(r.text, url);
+      } catch {
+        ids = [];
+      }
+    }
+    if (ids.length === 0) return [];
+    const top = ids.slice(0, 5);
+    const settled = await Promise.allSettled(
+      top.map((id) => dugaProvider.getMovieInfoByID(id))
+    );
+    const pairs = [];
+    settled.forEach((s, i) => {
+      if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
+        pairs.push({ slug: top[i], info: s.value });
+      }
+    });
+    learnedKeywords.set(kwNorm, ids.slice(0, 8));
+    for (const p of pairs) {
+      if (p.info.number) learnedNumbers.set(normNum(p.info.number), p.slug);
+    }
+    const infos = pairs.map((p) => p.info);
+    let kept = infos;
+    const numberLike = slugLike || /^[A-Z]+\d+$/.test(kwNorm) || /^\d+$/.test(kwNorm);
+    if (numberLike) {
+      const exact = infos.filter((i) => normNum(i.number) === kwNorm);
+      if (exact.length > 0) {
+        kept = exact;
+      } else {
+        const near = infos.filter(
+          (i) => compareStrings(normNum(i.number), kwNorm) >= 0.8
+        );
+        if (near.length > 0) kept = near;
+      }
+    } else if (keyword) {
+      const sub = infos.filter(
+        (i) => i.title.includes(keyword) || i.summary.includes(keyword) || i.actors.some((a) => a.includes(keyword)) || i.genres.some((g) => g.includes(keyword))
+      );
+      if (sub.length > 0) kept = sub;
+    }
+    return kept.map((i) => movieInfoToSearchResult(i));
   }
 };
 
@@ -5814,15 +5910,15 @@ var getchuProvider = {
 // src/providers/ave.ts
 var MOVIE_URL15 = "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
 var SEARCH_URL8 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
-var DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
-var DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
-var BING_URL = "https://www.bing.com/search?q=%s";
-var learnedNumbers = /* @__PURE__ */ new Map();
-var learnedKeywords = /* @__PURE__ */ new Map();
-function normNum(s) {
+var DDG_URL2 = "https://html.duckduckgo.com/html/?q=%s";
+var DDG_LITE_URL2 = "https://lite.duckduckgo.com/lite/?q=%s";
+var BING_URL2 = "https://www.bing.com/search?q=%s";
+var learnedNumbers2 = /* @__PURE__ */ new Map();
+var learnedKeywords2 = /* @__PURE__ */ new Map();
+function normNum2(s) {
   return s.toUpperCase().replace(/[-_\s]/g, "");
 }
-__name(normNum, "normNum");
+__name(normNum2, "normNum");
 function aveParseNumber(s) {
   const m = /\/(?:dvd\d)?([a-z\d-_]+)\.(?:jpe?g|png|gif|webp)/i.exec(s);
   return m ? m[1].toUpperCase() : "";
@@ -5999,7 +6095,7 @@ var aveProvider = {
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
     }
-    if (info.number) learnedNumbers.set(normNum(info.number), info.id);
+    if (info.number) learnedNumbers2.set(normNum2(info.number), info.id);
     return info;
   },
   normalizeMovieKeyword(keyword) {
@@ -6007,18 +6103,18 @@ var aveProvider = {
     return keyword.trim().toUpperCase();
   },
   async searchMovie(keyword) {
-    const kwNorm = normNum(keyword);
+    const kwNorm = normNum2(keyword);
     const numberLike = /^[A-Z]+\d+$/.test(kwNorm) || /^\d+$/.test(kwNorm);
     if (numberLike) {
-      const known = learnedNumbers.get(kwNorm);
+      const known = learnedNumbers2.get(kwNorm);
       if (known) {
         try {
           const info = await aveProvider.getMovieInfoByID(known);
-          if (isValidMovieInfo(info) && normNum(info.number) === kwNorm) {
+          if (isValidMovieInfo(info) && normNum2(info.number) === kwNorm) {
             return [movieInfoToSearchResult(info)];
           }
         } catch {
-          learnedNumbers.delete(kwNorm);
+          learnedNumbers2.delete(kwNorm);
         }
       }
     }
@@ -6032,7 +6128,7 @@ var aveProvider = {
       if (ids.length > 0) break;
       const q = encodeURIComponent(queryText);
       const pages = await Promise.allSettled(
-        [DDG_URL, DDG_LITE_URL, BING_URL].map(
+        [DDG_URL2, DDG_LITE_URL2, BING_URL2].map(
           (template) => fetchText(template.replace("%s", q), {
             providerName: "AVE",
             timeoutMs: 6e3
@@ -6049,7 +6145,7 @@ var aveProvider = {
       }
     }
     if (ids.length === 0) {
-      ids = learnedKeywords.get(kwNorm) ?? [];
+      ids = learnedKeywords2.get(kwNorm) ?? [];
     }
     if (ids.length === 0) {
       const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));
@@ -6065,19 +6161,19 @@ var aveProvider = {
         infos.push(s.value);
       }
     }
-    learnedKeywords.set(kwNorm, ids.slice(0, 8));
+    learnedKeywords2.set(kwNorm, ids.slice(0, 8));
     for (const info of infos) {
-      if (info.number) learnedNumbers.set(normNum(info.number), info.id);
+      if (info.number) learnedNumbers2.set(normNum2(info.number), info.id);
     }
     const kw = kwNorm;
     let kept = infos;
     if (numberLike) {
-      const exact = infos.filter((i) => normNum(i.number) === kw);
+      const exact = infos.filter((i) => normNum2(i.number) === kw);
       if (exact.length > 0) {
         kept = exact;
       } else {
         const near = infos.filter(
-          (i) => compareStrings(normNum(i.number), kw) >= 0.8
+          (i) => compareStrings(normNum2(i.number), kw) >= 0.8
         );
         if (near.length > 0) kept = near;
       }
@@ -6280,6 +6376,41 @@ var sodProvider = {
 // src/providers/javfree.ts
 var MOVIE_URL17 = "https://javfree.me/%s/%s";
 var SEARCH_URL10 = "https://javfree.me/?s=%s";
+var WP_SEARCH_URL = "https://javfree.me/wp-json/wp/v2/search?search=%s&per_page=10";
+function parseWpJsonSearchIDs(jsonText) {
+  let data;
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  const ids = [];
+  for (const item of data) {
+    const url = item?.url;
+    if (!url) continue;
+    const id = javfreeProvider.parseMovieIDFromURL(url);
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+__name(parseWpJsonSearchIDs, "parseWpJsonSearchIDs");
+function parseJavfreeCandidateIDs(html) {
+  const ids = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /javfree\.me(?:%2F|\/)(\d+)(?:%2F|\/)fc2-ppv-(\d+)/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const id = `${m[1]}-${m[2]}`;
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+      if (ids.length >= 8) break;
+    }
+  }
+  return ids;
+}
+__name(parseJavfreeCandidateIDs, "parseJavfreeCandidateIDs");
 function stripTags2(s) {
   return decodeEntities(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
@@ -6403,6 +6534,52 @@ var javfreeProvider = {
     return fc2ParseNumber(keyword);
   },
   async searchMovie(keyword) {
+    const numMatch = /(\d{6,})/.exec(keyword.replace(/,/g, ""));
+    const fc2num = numMatch ? numMatch[1] : "";
+    let ids = [];
+    try {
+      const api = WP_SEARCH_URL.replace("%s", encodeURIComponent(keyword));
+      const r2 = await fetchText(api, {
+        providerName: "JAVFREE",
+        timeoutMs: 8e3
+      });
+      ids = parseWpJsonSearchIDs(r2.text);
+    } catch {
+      ids = [];
+    }
+    if (ids.length === 0) {
+      ids = await raceSearchEngines(
+        "JAVFREE",
+        [
+          `site:javfree.me ${keyword}`,
+          `site:javfree.me ${keyword}`,
+          `javfree.me ${keyword}`
+        ],
+        parseJavfreeCandidateIDs
+      );
+    }
+    if (ids.length > 0) {
+      const top = [...new Set(ids)].slice(0, 6);
+      const settled = await Promise.allSettled(
+        top.map((id) => javfreeProvider.getMovieInfoByID(id))
+      );
+      const infos = [];
+      for (const s of settled) {
+        if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
+          infos.push(s.value);
+        }
+      }
+      let kept = infos;
+      if (fc2num) {
+        const exact = infos.filter(
+          (i) => i.number.replace(/\D/g, "") === fc2num
+        );
+        if (exact.length > 0) kept = exact;
+      }
+      if (kept.length > 0) {
+        return kept.map((i) => movieInfoToSearchResult(i));
+      }
+    }
     const fc2ID = keyword.slice(keyword.lastIndexOf("-") + 1);
     const url = SEARCH_URL10.replace("%s", encodeURIComponent(fc2ID));
     const r = await fetchPage(url, { providerName: "JAVFREE" });

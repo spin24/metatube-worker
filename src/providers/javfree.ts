@@ -1,7 +1,8 @@
 // JAVFREE — port of provider/javfree from metatube-sdk-go.
 // FC2-only WordPress site: movies use a dual ID "{post}-{number}" and
-// live at /{post}/fc2-ppv-{number}. Search results all carry the
-// searched number, exactly as in the Go version.
+// live at /{post}/fc2-ppv-{number}. Search goes through the WordPress
+// REST API (the front-end ?s= page is WAF-gated from datacenter
+// egress), with a search-engine relay as fallback.
 
 import {
   MovieInfo,
@@ -10,6 +11,7 @@ import {
   MovieSearcher,
   ProviderError,
   isValidMovieInfo,
+  movieInfoToSearchResult,
 } from "../types";
 import {
   absURL,
@@ -17,12 +19,52 @@ import {
   collectFields,
   decodeEntities,
   fetchPage,
+  fetchText,
   parseDateLoose,
 } from "../lib/scrape";
+import { raceSearchEngines } from "../lib/engines";
 import { fc2ParseNumber } from "./fc2hub";
 
 const MOVIE_URL = "https://javfree.me/%s/%s";
 const SEARCH_URL = "https://javfree.me/?s=%s";
+const WP_SEARCH_URL =
+  "https://javfree.me/wp-json/wp/v2/search?search=%s&per_page=10";
+
+/** Composite JAVFREE ids from a wp-json search response body. */
+export function parseWpJsonSearchIDs(jsonText: string): string[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  const ids: string[] = [];
+  for (const item of data) {
+    const url = (item as { url?: string })?.url;
+    if (!url) continue;
+    const id = javfreeProvider.parseMovieIDFromURL(url);
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+/** Candidate JAVFREE ids from a search-engine results page. */
+export function parseJavfreeCandidateIDs(html: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const re = /javfree\.me(?:%2F|\/)(\d+)(?:%2F|\/)fc2-ppv-(\d+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const id = `${m[1]}-${m[2]}`;
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+      if (ids.length >= 8) break;
+    }
+  }
+  return ids;
+}
 
 function stripTags(s: string): string {
   return decodeEntities(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
@@ -181,6 +223,58 @@ export const javfreeProvider: MovieProvider & MovieSearcher = {
   },
 
   async searchMovie(keyword: string): Promise<MovieSearchResult[]> {
+    const numMatch = /(\d{6,})/.exec(keyword.replace(/,/g, ""));
+    const fc2num = numMatch ? numMatch[1] : "";
+
+    // Primary: the WordPress REST search endpoint. The front-end
+    // ?s= page is WAF-gated from datacenter egress, but wp-json
+    // answers plainly and returns post URLs directly.
+    let ids: string[] = [];
+    try {
+      const api = WP_SEARCH_URL.replace("%s", encodeURIComponent(keyword));
+      const r = await fetchText(api, {
+        providerName: "JAVFREE",
+        timeoutMs: 8000,
+      });
+      ids = parseWpJsonSearchIDs(r.text);
+    } catch {
+      ids = [];
+    }
+    // Fallback: the search-engine relay.
+    if (ids.length === 0) {
+      ids = await raceSearchEngines(
+        "JAVFREE",
+        [
+          `site:javfree.me ${keyword}`,
+          `site:javfree.me ${keyword}`,
+          `javfree.me ${keyword}`,
+        ],
+        parseJavfreeCandidateIDs,
+      );
+    }
+    if (ids.length > 0) {
+      const top = [...new Set(ids)].slice(0, 6);
+      const settled = await Promise.allSettled(
+        top.map((id) => javfreeProvider.getMovieInfoByID(id)),
+      );
+      const infos: MovieInfo[] = [];
+      for (const s of settled) {
+        if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
+          infos.push(s.value);
+        }
+      }
+      let kept = infos;
+      if (fc2num) {
+        const exact = infos.filter(
+          (i) => i.number.replace(/\D/g, "") === fc2num,
+        );
+        if (exact.length > 0) kept = exact;
+      }
+      if (kept.length > 0) {
+        return kept.map((i) => movieInfoToSearchResult(i));
+      }
+    }
+    // Last resort: the original ?s= search page.
     const fc2ID = keyword.slice(keyword.lastIndexOf("-") + 1);
     const url = SEARCH_URL.replace("%s", encodeURIComponent(fc2ID));
     const r = await fetchPage(url, { providerName: "JAVFREE" });

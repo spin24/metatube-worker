@@ -25,12 +25,12 @@ import { parseGcollePage } from "./providers/gcolle";
 import { parseTokyoHotPage } from "./providers/tokyo-hot";
 import { parseMadouquPage } from "./providers/madouqu";
 import { parseFc2hubPage } from "./providers/fc2hub";
-import { parseDugaPage, parseDugaSearchIDs } from "./providers/duga";
+import { parseDugaPage, parseDugaSearchIDs, parseDugaCandidateSlugs } from "./providers/duga";
 import { parseMgsPage, parseMgsSearch } from "./providers/mgs";
 import { parseGetchuPage } from "./providers/getchu";
 import { parseAvePage, parseAveSearch } from "./providers/ave";
 import { parseSodPage, parseSodSearch } from "./providers/sod";
-import { parseJavfreePage, parseJavfreeSearch } from "./providers/javfree";
+import { parseJavfreePage, parseJavfreeSearch, parseWpJsonSearchIDs, parseJavfreeCandidateIDs } from "./providers/javfree";
 import { parseFc2ppvdbPage } from "./providers/fc2ppvdb";
 
 function htmlResponse(html: string): Response {
@@ -177,6 +177,15 @@ export default {
       case "/parse/duga-ids": {
         const u = url.searchParams.get("url") ?? "";
         return Response.json(await parseDugaSearchIDs(html, u));
+      }
+      case "/parse/duga-engine": {
+        return Response.json(parseDugaCandidateSlugs(html));
+      }
+      case "/parse/javfree-wpjson": {
+        return Response.json(parseWpJsonSearchIDs(html));
+      }
+      case "/parse/javfree-engine": {
+        return Response.json(parseJavfreeCandidateIDs(html));
       }
       case "/parse/mgs": {
         const u = url.searchParams.get("url") ?? "";
