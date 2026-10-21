@@ -1,0 +1,11 @@
+name = "metatube-worker"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+# D1 metadata cache (replaces GORM + SQLite/PostgreSQL in the Go version).
+# 1. Run: npm run db:create   -> copy the returned database_id below.
+# 2. Run: npm run db:remote    -> apply schema.sql to the remote database.
+[[d1_databases]]
+binding = "DB"
+database_name = "metatube"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
