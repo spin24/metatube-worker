@@ -6531,7 +6531,8 @@ var javfreeProvider = {
     return info;
   },
   normalizeMovieKeyword(keyword) {
-    return fc2ParseNumber(keyword);
+    const num = fc2ParseNumber(keyword);
+    return num || keyword.trim();
   },
   async searchMovie(keyword) {
     const numMatch = /(\d{6,})/.exec(keyword.replace(/,/g, ""));

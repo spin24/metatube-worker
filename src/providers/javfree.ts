@@ -219,7 +219,12 @@ export const javfreeProvider: MovieProvider & MovieSearcher = {
   },
 
   normalizeMovieKeyword(keyword: string): string {
-    return fc2ParseNumber(keyword);
+    // Go reduces every keyword to its FC2 number, which made title
+    // keywords unsearchable. The wp-json search handles titles, so
+    // non-number keywords now pass through (number keywords keep
+    // the exact Go normalization).
+    const num = fc2ParseNumber(keyword);
+    return num || keyword.trim();
   },
 
   async searchMovie(keyword: string): Promise<MovieSearchResult[]> {
