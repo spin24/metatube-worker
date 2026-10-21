@@ -6002,17 +6002,23 @@ var aveProvider = {
   async searchMovie(keyword) {
     const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
     let ids = [];
-    for (const template of [DDG_URL, DDG_LITE_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
-      try {
-        const r = await fetchText(template.replace("%s", q), {
-          providerName: "AVE",
-          timeoutMs: 6e3
-        });
-        ids = parseAveCandidateIDs(r.text);
-      } catch {
-        ids = [];
+    for (let round = 0; round < 2 && ids.length === 0; round++) {
+      const pages = await Promise.allSettled(
+        [DDG_URL, DDG_LITE_URL, BING_URL].map(
+          (template) => fetchText(template.replace("%s", q), {
+            providerName: "AVE",
+            timeoutMs: 6e3
+          })
+        )
+      );
+      for (const page of pages) {
+        if (page.status !== "fulfilled") continue;
+        const found = parseAveCandidateIDs(page.value.text);
+        if (found.length > 0) {
+          ids = found;
+          break;
+        }
       }
-      if (ids.length > 0) break;
     }
     if (ids.length === 0) {
       const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));

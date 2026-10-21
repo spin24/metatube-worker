@@ -258,20 +258,26 @@ export const aveProvider: MovieProvider & MovieSearcher = {
     const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
     // DDG (both endpoints) randomly answers with a challenge or
     // empty page — from some egress IPs more often than others — so
-    // the engines are rotated with short timeouts; the first page
-    // that yields candidates wins.
+    // the engines race in parallel rounds; the first non-empty
+    // candidate list (in engine preference order) wins.
     let ids: string[] = [];
-    for (const template of [DDG_URL, DDG_LITE_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
-      try {
-        const r = await fetchText(template.replace("%s", q), {
-          providerName: "AVE",
-          timeoutMs: 6000,
-        });
-        ids = parseAveCandidateIDs(r.text);
-      } catch {
-        ids = [];
+    for (let round = 0; round < 2 && ids.length === 0; round++) {
+      const pages = await Promise.allSettled(
+        [DDG_URL, DDG_LITE_URL, BING_URL].map((template) =>
+          fetchText(template.replace("%s", q), {
+            providerName: "AVE",
+            timeoutMs: 6000,
+          }),
+        ),
+      );
+      for (const page of pages) {
+        if (page.status !== "fulfilled") continue;
+        const found = parseAveCandidateIDs(page.value.text);
+        if (found.length > 0) {
+          ids = found;
+          break;
+        }
       }
-      if (ids.length > 0) break;
     }
     if (ids.length === 0) {
       // Last resort: the site's own search (works only if the egress
