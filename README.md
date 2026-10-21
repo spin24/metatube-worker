@@ -1,57 +1,63 @@
 # metatube-worker
 
 Slim port of [metatube-sdk-go](https://github.com/metatube-community/metatube-sdk-go)
-to **Cloudflare Workers (free tier)**.
+to **Cloudflare Workers (free tier)**: movie/actor metadata lookup and
+search with a D1 cache, API-compatible with the Go server
+(`{ "data": ... }` envelope, `/v1/...` routes, lazy cache semantics).
 
-Scope of this port, by design:
-
-- **30 movie providers**: FANZA, JavBus, AVBASE, the batch-1 set —
-  1Pondo, 10musume, PACOPACOMAMA, MURAMURA, Caribbeancom, CaribbeancomPR,
-  HEYZO, HeyDouga, MYWIFE, Pcolle, Gcolle, C0930, H0930, H4610,
-  FALENO, DAHLIA, TOKYO-HOT, MadouQu, fc2hub — the batch-2 set —
-  DUGA, MGS, Getchu, AVE, SOD, JAVFREE — and FC2 (official) plus
-  FC2CMADB. KIN8 and FC2PPVDB were removed: KIN8 was abandoned after
-  its upstream restructure broke every movie URL, and fc2ppvdb.com
-  shut down (FC2CMADB is its successor and takes its place).
-- **Two actor providers: AV-LEAGUE and Gfriends** — actor info +
-  actor search with the same lazy D1 cache semantics
-  (`actor_metadata` table). Gfriends reads a pre-indexed D1 table
-  (see the Actors section).
-- **No image pipeline** — no pigo face detection, no cropping, no goimagehash,
-  no jpegli. Image URLs are returned exactly as the provider serves them.
-- **D1 instead of GORM + SQLite/PostgreSQL** for the metadata cache.
-- **API shape mirrors the Go server**: `{ "data": ... }` envelope,
-  `/v1/...` routes, lazy cache semantics.
+By design: **no image pipeline** (no pigo/jpegli/goimagehash — image
+URLs are returned exactly as providers serve them) and **no reviews**.
 
 ## Providers
 
-### FANZA
-GraphQL API (`api.video.dmm.co.jp/graphql`) for digital content — one
-`fetch`, one JSON parse, no DOM — which is what makes it fit the Workers
-free tier (10 ms CPU per request). Mono URLs are accepted and resolved
-through the digital API via their `cid`.
+### Movies (30)
 
-Two porting notes:
+| Provider | Search | | Provider | Search |
+|---|:---:|---|---|:---:|
+| FANZA | ✓ | | HEYZO | — |
+| MGS | △ | | HeyDouga | — |
+| Getchu | — | | MYWIFE | — |
+| FC2 | — | | Gcolle | — |
+| SOD | △ | | Pcolle | — † |
+| fc2hub | ✓ | | C0930 | — |
+| DUGA | ✓ | | H0930 | — |
+| AVE | ✓ | | H4610 | — |
+| FC2CMADB | — | | TOKYO-HOT | ✓ |
+| AVBase | ✓ | | MadouQu | ✓ |
+| JavBus | ✓ | | 1Pondo | — |
+| FALENO | △ | | 10musume | — |
+| DAHLIA | ✓ | | PACOPACOMAMA | — |
+| JAVFREE | ✓ | | MURAMURA | — |
+| Caribbeancom | — | | CaribbeancomPR | — |
 
-- The trimmed GraphQL query requests only the fields that map onto
-  `MovieInfo` (the Go query pulls pricing/products/playable-info too).
-- All floor flags (`isAv` / `isAnime` / `isAmateur` / `isCinema`) are sent as
-  `true` in a single request: the flags only gate `@include` fragments and
-  the fragments do not conflict, so one subrequest replaces the Go version's
-  per-floor probing.
+### Actors (2)
 
-### JavBus
-Scrapes `https://www.javbus.com/ja/{ID}` (Japanese pages, like the Go
-version) with **HTMLRewriter** — the native streaming parser is the only
-HTML option that fits the free-tier CPU budget. Field mapping mirrors the
-Go XPath handlers; cross-validated against FANZA data for the same titles.
+| Provider | Search |
+|---|:---:|
+| AV-LEAGUE | ✓ |
+| Gfriends | ✓ (exact name only, photos only) |
 
-- Thumb URL is derived (`/cover/{code}_b.jpg` → `/thumb/{code}.jpg`)
-  instead of the Go version's HEAD-request probing.
-- No summary / score / preview video: JavBus pages do not carry them.
-- **JavBus image URLs are hotlink-protected**: they only load with a
-  `Referer: https://www.javbus.com/` header (same behaviour as the Go
-  version's URLs). Clients that set per-provider referers are fine.
+Legend: ✓ search implemented and working · △ search implemented but
+the source site blocks Cloudflare egress (info lookups are blocked
+too) · — info lookups only · † Pcolle info is implemented but its
+site loops redirects against Workers `fetch`; kept registered,
+effectively unusable.
+
+Removed: KIN8 (upstream restructure broke every movie URL) and
+FC2PPVDB (site shut down; FC2CMADB is its successor). Not ported:
+ThePornDB (movie/scene/actor — needs a personal API token).
+
+Notes:
+
+- Providers whose own search endpoint is bot-gated from datacenter
+  egress (AVE, DUGA) search through a web-search-engine relay
+  (shared `src/lib/engines.ts`); JAVFREE search uses the site's
+  WordPress REST API instead of its gated front end.
+- JavBus image URLs are hotlink-protected: they only load with a
+  `Referer: https://www.javbus.com/` header.
+- Gfriends' dataset (one 6.5 MB Filetree.json, ~34k names) is
+  pre-indexed into D1 and kept fresh automatically — see
+  [Gfriends sync](#gfriends-sync).
 
 ## API
 
@@ -59,200 +65,90 @@ Go XPath handlers; cross-validated against FANZA data for the same titles.
 |---|---|
 | `GET /` | Service info + provider list |
 | `GET /v1/providers` | Registered providers |
-| `GET /v1/movies/search?q=&provider=&fallback=` | Keyword search (see below). |
+| `GET /v1/movies/search?q=&provider=&fallback=` | Movie search (below) |
 | `GET /v1/movies/:provider/:id` | Movie info. Lazy by default: D1 first, provider fetch on miss, then upsert. `?lazy=false` forces a refresh. |
-| `POST /v1/movies/:provider/lookup` | Body `{ "url": "..." }` — parse the ID from a FANZA/JavBus URL, then same flow as above. |
+| `POST /v1/movies/:provider/lookup` | Body `{ "url": "..." }` — parse the ID from a provider URL, then same flow as above. |
+| `GET /v1/actors/search?q=&provider=&fallback=` | Actor search (below) |
+| `GET /v1/actors/:provider/:id` | Actor info, same lazy cache flow. |
+| `POST /v1/actors/:provider/lookup` | Body `{ "url": "..." }` — parse the actor ID from a URL. |
 
-### Search
+Errors: `404` not found, `400` invalid input, `501` unsupported,
+`502` upstream failure, returned as `{ "error": "..." }`.
 
-Mirrors the Go server's `/v1/movies/search` handler and engine:
+### Search semantics (mirrors the Go engine)
 
-- `provider` given → search that provider only. Omitted → fan out to all
-  search-capable providers concurrently; a failing provider is skipped,
-  never fatal. Merged fan-outs give each provider a 10 s deadline (a
-  provider that misses it is skipped for that response) so a slow
-  relay search cannot hold the whole merged result hostage;
-  single-provider searches are unbounded, as in Go.
-- Results are deduped by `provider + id` and, for all-provider search,
-  ranked by `similarity(keyword, number) × provider priority`
-  (Levenshtein, ported from `common/comparer`). Exact number matches
-  float to the top.
-- `fallback` (default `true`) also exact-matches the keyword against the
-  D1 cache (`number` or `id`, case-insensitive) — previously fetched
-  movies show up even when a live search misses them.
-- If `q` is a URL, it resolves directly to that movie's info.
+- `provider` given → that provider only. Omitted → fan out to all
+  search-capable providers concurrently; a failing provider is
+  skipped, never fatal. Merged fan-outs give each provider a **10 s
+  deadline** (a provider that misses it is skipped for that
+  response); single-provider searches are unbounded, as in Go.
+- Movie results are deduped by `provider + id` and ranked by
+  `similarity(keyword, number) × provider priority`; actor results
+  are ranked by provider priority only.
+- `fallback` (default `true`) exact-matches the keyword against the
+  D1 cache (movie `number`/`id`, actor name — case-insensitive), so
+  previously fetched entries show up even when a live search misses.
+- If `q` is a URL, it resolves directly to that item's info.
+- Actor keywords are split into names on `、;,（）`; per-name
+  results are filtered to name similarity ≥ 0.3.
 
-Provider notes:
+## Database (D1)
 
-- **FANZA** searches `www.dmm.co.jp/search` (limit 120, by date). Hyphenated
-  numbers are rewritten (`ADN-306` → `adn00306#`, then `adn306`) because
-  DMM cannot search them directly. The fetch uses `redirect: "manual"`:
-  DMM answers non-Japanese egress with a 307 to a region page, but the 307
-  body still contains the full result payload (Next.js `__next_f` flight
-  data, from which `backendResponse` is extracted — a port of the Go
-  `searchparse` package). Results are internally re-sorted by ID
-  similarity, preferring digital homepages on ties.
-- **JavBus** searches both `/ja/search/{q}` and
-  `/ja/uncensored/search/{q}` and parses the `movie-box` cards; the cover
-  URL is guessed from the thumb URL, like the Go version.
+One database (`metatube`, binding `DB`) with three tables
+(`schema.sql`):
 
-### AVBASE
-Uses avbase.net's Next.js data API (`_next/data/{buildId}/works/...`),
-with the buildId scraped from the homepage's `__NEXT_DATA__` and cached
-for ~2 hours; a 404 invalidates the cache and retries once (AVBase
-redeploys change the buildId).
+- `movie_metadata`, `actor_metadata` — the lazy info caches.
+- `gfriends_actors` — the pre-indexed Gfriends dataset.
 
-AVBase is an aggregator: a work bundles products from source sites
-(duga / fanza / getchu / mgstage / pcolle). Like the Go version, info
-lookups delegate to the source provider for full metadata and then
-supplement missing fields (maker/label/series/summary/genres, actors,
-number) from the work record — in this port the delegation target is
-FANZA only, and works without a FANZA product fall back to the work
-record itself. Work IDs may carry a prefix (`prestige:ABP-588`).
+### A note on `database_id`
 
-### Batch-1 providers (20)
+The `database_id` in `wrangler.toml` is an **identifier, not a
+credential** — it is safe to commit and publish. D1 is only
+reachable through a Worker binding in the same account, the
+dashboard, or the API with the account's API token; unauthenticated
+API calls against the ID simply return `Authentication error`.
 
-Ports of the Go providers' info lookups; the ones with a Go
-`MovieSearcher` (DAHLIA, FALENO, TOKYO-HOT, MadouQu, fc2hub) also search.
-Shared plumbing lives in `src/lib/scrape.ts` (fetch + charset-aware
-decoding — Caribbeancom and the 0930 family still serve EUC-JP — and
-HTMLRewriter field/label-row collectors; note HTMLRewriter rejects
-positional pseudo-classes and leaves entities raw in text chunks, both
-handled there).
+If you deploy your own copy: create **your own** D1 database, put
+*its* ID in `wrangler.toml`, and apply `schema.sql`. The committed
+ID points at the author's database, which your account cannot
+access — by design, not by secrecy.
 
-- **1Pondo family** (`pondo-core.ts`: 1Pondo / 10musume / PACOPACOMAMA /
-  MURAMURA) is JSON-API based — detail + gallery JSON endpoints, no HTML.
-- **Caribbeancom family** (`carib-core.ts`) parses `#moviepages` rows;
-  the score is the star-character count, as in Go.
-- **0930 family** (`site0930.ts`: C0930 / H0930 / H4610) reads the
-  JSON-LD block plus the `#movieInfo` definition list; numbers are
-  `{provider}-{id}` lowercased.
-- **FALENO / DAHLIA** (`faleno-core.ts`) share one site engine
-  (WordPress-style `/?s=` search, `modal=off` cookie, no redirect
-  following on search — the body is parsed as-is).
-- **HEYZO** additionally resolves the player script's m3u8 to the MP4
-  sample URL; **HeyDouga** pulls its score from a rating JSON and genres
-  from a tag POST (best-effort).
-- **Gcolle** targets the site's current redesign (`/adult/contents/{id}`
-  + Product JSON-LD) — the Go version's osCommerce XPaths match nothing
-  on the new layout. **HeyDouga**'s info list is likewise gone from the
-  current pages, so actors/runtime/release there depend on the
-  rating/tag endpoints and the heading cast list.
-- **MadouQu** keeps the Go version's priority `0` (registered but
-  effectively disabled in merged-search ranking).
-- **fc2hub** targets javten.com: JSON-LD primary (the Go version's
-  positional `#content` XPaths duplicate the same fields), and search
-  is the redirect probe (`/search?kw=` → video page).
-- Not yet verified from any egress (blocked in the dev sandbox, first
-  real test is production): FALENO, Pcolle. FC2 and FC2CMADB parsers
-  are validated locally against real pages from the dev sandbox;
-  their first Cloudflare-egress test is the deploy that ships them.
+Quota note (free tier): 100k `rows_written`/day, and every index on
+a written column costs at least one extra written row — a full
+Gfriends reload is ~68k, so it is a disaster-recovery operation,
+never a routine one. Normal traffic only writes cache misses.
 
-### Batch-2 providers (7)
+## Gfriends sync
 
-- **DUGA** info scrape (the page's 作品ID replaces the URL id, as in
-  Go). Its own search endpoint answers 503 to datacenter egress, so
-  search relays through web search engines like AVE's (shared
-  `lib/engines.ts`): `site:duga.jp` queries yield `/ppv/` work slugs
-  that resolve to full info and are verified by number; slug-shaped
-  keywords resolve directly, and verified number → slug mappings are
-  remembered per isolate.
-- **MGS** needs the `adc=1` cookie; the preview video comes from the
-  sampleplayer JSON endpoint (ISM URL rewritten to .mp4). The Go
-  version's BigThumbURL derivation is dropped — this port's MovieInfo
-  has no big-thumb field. Reviews are not ported (out of scope).
-- **Getchu** (dl.getchu.com, EUC-JP) keys its title/cover/gallery
-  cells off presentational attributes, and its spec rows are read by
-  regex because the page is one nest of layout tables.
-- **AVE** takes IDs from the `pro` query param; search numbers come
-  from jacket image filenames. The native `/dvd/search` is hard-gated
-  by a reCAPTCHA v2 (verifybot) for datacenter egress, so search is
-  resolved through web search engines instead: a `site:`-restricted
-  DuckDuckGo (Lite/Bing fallbacks) query finds candidate detail
-  pages, and each candidate is verified against its real metadata
-  before being returned — for number-like keywords only exact number
-  matches survive.
-- **SOD** reproduces the age-gate flow (follow the enter link with
-  the page as Referer, parse that body) and fails lookups whose cover
-  is still the `now_*.jpg` placeholder, as Go does.
-- **JAVFREE** is FC2-only with dual IDs (`{post}-{number}`). The
-  front-end `?s=` search is WAF-gated from datacenter egress, so
-  search uses the site's WordPress REST API
-  (`/wp-json/wp/v2/search`), which returns post URLs directly;
-  a search-engine relay and the original `?s=` page remain as
-  fallbacks.
-- **FC2** (official, priority 1000) scrapes adult.contents.fc2.com
-  article pages, Go-faithful: hidden spam spans are stripped from
-  the title, the summary comes from its iframe subdocument, and a
-  mismatched 商品ID row fails the lookup. Info only, as in Go.
-- **FC2CMADB** (998, FC2PPVDB's replacement) parses the article
-  record out of the site's Inertia props JSON (`data-page` script
-  block): title, release date, duration, writer as maker, tags as
-  genres; the cover is the w800 rendition of the FC2 thumbnail.
+The Gfriends table syncs itself: a `scheduled()` handler fetches
+Filetree.json, flattens it (34k names → photo URL lists), diffs
+against the table and writes only the delta (a day's upstream
+change is a few names). Enable it with a Cron Trigger —
+`0 20 * * *` (04:00 Asia/Taipei) is in `wrangler.toml` `[triggers]`
+and applies automatically on wrangler/Git deploys; for dashboard
+deployments add it under Settings → Triggers → Cron Triggers.
+`POST /admin/gfriends/sync` runs the identical path on demand.
 
-Not yet verified from the dev sandbox (blocked there; first real
-test is production, as with batch 1): MGS, SOD. AVE's
-engine-relay search is verified live (flaky per request by nature;
-it leans on its learned-mapping fast path). The DUGA relay and
-JAVFREE wp-json search get their first live test with the deploy
-that ships them — their extractors are validated locally against
-real engine/REST responses.
-
-### Actors (AV-LEAGUE, Gfriends)
-`GET /v1/actors/AV-LEAGUE/{id}`, `POST /v1/actors/AV-LEAGUE/lookup` and
-`GET /v1/actors/search?q=&provider=&fallback=` mirror the movie engine:
-lazy D1 cache in `actor_metadata`, keyword split into names on
-`、;,（）`, per-name results merged with exact-name DB fallback hits,
-filtered to name similarity >= 0.3; the all-provider variant sorts by
-provider priority only. Profiles are scraped from av-league.com actress
-pages (name, aliases, measurements/cup, height, blood type, birthday,
-debut date, nationality, profile image URL).
-
-**Gfriends** (priority 999) is photos-only, as in Go: an actor's ID is
-her name and a lookup returns every dataset photo whose filename stem
-equals it (search is exact-name only). The dataset is one 6.5 MB
-Filetree.json — unparseable within the free tier's 10 ms CPU budget —
-so it is pre-indexed into the `gfriends_actors` D1 table (~34k names)
-by `tools/load-gfriends.py`, which posts batches to the key-guarded
-`POST /admin/gfriends/load` endpoint (create an `ADMIN_KEY` secret,
-run the loader once, then delete the secret; the endpoint creates
-the table itself). The upstream dataset auto-updates daily, but a
-day's change is only a few names, and the loader defaults to a
-delta sync (dump → diff → upsert/delete only what changed), so an
-occasional re-run refreshes the index for a handful of row writes;
-`--full` reloads everything (~68k rows_written with D1's index
-accounting — a once-a-day-quota event, not a routine operation).
-Fully automatic alternative (recommended): the worker also syncs
-itself — a `scheduled()` handler runs the same flatten + diff
-against D1 directly (no key needed). Add a Cron Trigger in the
-dashboard (Settings → Triggers → Cron Triggers, e.g. `0 20 * * *`
-= 04:00 Asia/Taipei; the same expression is in wrangler.toml) and
-validate once via `POST /admin/gfriends/sync`, which runs the
-identical code path on demand. The loader then remains only a
-disaster-recovery tool. ThePornDB's actor provider is not ported:
-it requires a personal API token.
-
-Errors: `404` not found, `400` invalid input, `502` upstream failure,
-returned as `{ "error": "..." }`.
+The external loader (`tools/load-gfriends.py`, delta by default,
+`--full` for disaster recovery) talks to the key-guarded
+`/admin/gfriends/*` endpoints (`ADMIN_KEY` secret). Once the cron
+sync is verified, the secret can be deleted and those endpoints go
+inert; the loader is then a recovery tool only.
 
 ## Deployment via GitHub (Workers Builds)
 
-Once the D1 database exists and its real id is in `wrangler.toml`,
-the worker can deploy itself on every push:
-
 1. Push this repo to GitHub (public or private).
-2. In the Cloudflare dashboard: Workers & Pages → `metatube-worker`
-   → Settings → **Builds** → Connect → GitHub, pick the repo and the
+2. Cloudflare dashboard: Workers & Pages → `metatube-worker`
+   → Settings → **Builds** → Connect → GitHub; pick the repo and the
    production branch (`main`). Build command: *(empty)*; deploy
    command: `npx wrangler deploy` (the default).
-3. Push to `main` → Cloudflare installs dependencies, runs wrangler,
-   and deploys. The `wrangler.toml` becomes the source of truth for
-   bindings, observability and the cron trigger; dashboard-set
-   secrets (e.g. `ADMIN_KEY`) survive deploys untouched.
+3. Every push to `main` now builds and deploys. `wrangler.toml` is
+   the source of truth for bindings, observability and the cron
+   trigger; dashboard-set secrets survive deploys untouched.
 
 The manual alternative — pasting `dist/metatube-worker.bundle.js`
-into the dashboard code editor — keeps working, but stop mixing
-the two flows once Git deployments are on.
+into the dashboard code editor — keeps working, but stop mixing the
+two flows once Git deployments are on.
 
 ## Setup
 
@@ -271,20 +167,15 @@ npm run dev
 npm run deploy
 ```
 
-## Known limitations & next steps
+## Known limitations
 
-- **Mono-only content** (DVD releases with no digital edition) will 404
-  on FANZA info lookups, since the mono HTML path is not ported. (FANZA
+- **Mono-only content** (DVD releases with no digital edition) 404s
+  on FANZA info lookups — the mono HTML path is not ported. (FANZA
   *search* does return mono results, like the Go version.)
-- **Reviews are not ported** (out of scope by decision).
-- FANZA / JavBus / AVBase / AV-LEAGUE are all verified reachable from
-  Cloudflare egress in production; the batch-1 providers are verified
-  per-provider as deployments land (see the note in their section).
-- Free-tier budget: cache hits are ~1–2 ms CPU; a cache miss costs one
-  GraphQL subrequest plus a small JSON parse — comfortably inside limits
-  for personal use.
+- Free-tier budget: subrequests per invocation cap merged searches
+  at the current 13 searchers; cache hits are ~1–2 ms CPU.
 
 ## Credits
 
-Provider logic, GraphQL query shape and field mapping are ported from
-metatube-sdk-go (Apache-2.0) by the MetaTube community.
+Provider logic and field mapping are ported from metatube-sdk-go
+(Apache-2.0) by the MetaTube community.
