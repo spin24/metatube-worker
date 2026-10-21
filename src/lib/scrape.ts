@@ -29,6 +29,8 @@ export async function fetchText(
     contentType?: string;
     redirect?: "follow" | "manual";
     providerName?: string;
+    /** Abort the fetch after this many ms (flaky endpoints). */
+    timeoutMs?: number;
   } = {},
 ): Promise<FetchTextResult> {
   const headers: Record<string, string> = { "User-Agent": UA };
@@ -42,6 +44,7 @@ export async function fetchText(
       headers,
       body: opts.body,
       redirect: opts.redirect ?? "follow",
+      signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
     });
   } catch (e) {
     throw new ProviderError(

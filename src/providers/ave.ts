@@ -240,6 +240,7 @@ export const aveProvider: MovieProvider & MovieSearcher = {
     const r = await fetchPage(rawURL, {
       providerName: "AVE",
       notFoundMessage: `movie not found: ${id}`,
+      timeoutMs: 10000,
     });
     const info = await parseAvePage(r.text, rawURL, id);
     if (!isValidMovieInfo(info)) {
@@ -255,13 +256,16 @@ export const aveProvider: MovieProvider & MovieSearcher = {
 
   async searchMovie(keyword: string): Promise<MovieSearchResult[]> {
     const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
-    // DDG occasionally answers with a transient empty page, so it is
-    // tried twice before falling through to the other engines.
+    // DDG (both endpoints) randomly answers with a challenge or
+    // empty page — from some egress IPs more often than others — so
+    // the engines are rotated with short timeouts; the first page
+    // that yields candidates wins.
     let ids: string[] = [];
-    for (const template of [DDG_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
+    for (const template of [DDG_URL, DDG_LITE_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
       try {
         const r = await fetchText(template.replace("%s", q), {
           providerName: "AVE",
+          timeoutMs: 6000,
         });
         ids = parseAveCandidateIDs(r.text);
       } catch {
@@ -278,7 +282,7 @@ export const aveProvider: MovieProvider & MovieSearcher = {
     }
 
     const settled = await Promise.allSettled(
-      ids.slice(0, 8).map((id) => aveProvider.getMovieInfoByID(id)),
+      ids.slice(0, 6).map((id) => aveProvider.getMovieInfoByID(id)),
     );
     const infos: MovieInfo[] = [];
     for (const s of settled) {

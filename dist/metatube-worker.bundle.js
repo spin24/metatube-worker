@@ -3364,7 +3364,8 @@ async function fetchText(url, opts = {}) {
       method: opts.method ?? "GET",
       headers,
       body: opts.body,
-      redirect: opts.redirect ?? "follow"
+      redirect: opts.redirect ?? "follow",
+      signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : void 0
     });
   } catch (e) {
     throw new ProviderError(
@@ -5985,7 +5986,8 @@ var aveProvider = {
     if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
     const r = await fetchPage(rawURL, {
       providerName: "AVE",
-      notFoundMessage: `movie not found: ${id}`
+      notFoundMessage: `movie not found: ${id}`,
+      timeoutMs: 1e4
     });
     const info = await parseAvePage(r.text, rawURL, id);
     if (!isValidMovieInfo(info)) {
@@ -6000,10 +6002,11 @@ var aveProvider = {
   async searchMovie(keyword) {
     const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
     let ids = [];
-    for (const template of [DDG_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
+    for (const template of [DDG_URL, DDG_LITE_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
       try {
         const r = await fetchText(template.replace("%s", q), {
-          providerName: "AVE"
+          providerName: "AVE",
+          timeoutMs: 6e3
         });
         ids = parseAveCandidateIDs(r.text);
       } catch {
@@ -6017,7 +6020,7 @@ var aveProvider = {
       return parseAveSearch(r.text, url);
     }
     const settled = await Promise.allSettled(
-      ids.slice(0, 8).map((id) => aveProvider.getMovieInfoByID(id))
+      ids.slice(0, 6).map((id) => aveProvider.getMovieInfoByID(id))
     );
     const infos = [];
     for (const s of settled) {
