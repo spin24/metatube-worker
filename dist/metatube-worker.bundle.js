@@ -5813,6 +5813,9 @@ var getchuProvider = {
 // src/providers/ave.ts
 var MOVIE_URL15 = "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
 var SEARCH_URL8 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
+var DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
+var DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
+var BING_URL = "https://www.bing.com/search?q=%s";
 function aveParseNumber(s) {
   const m = /\/(?:dvd\d)?([a-z\d-_]+)\.(?:jpe?g|png|gif|webp)/i.exec(s);
   return m ? m[1].toUpperCase() : "";
@@ -5935,6 +5938,21 @@ async function parseAveSearch(html, pageURL) {
   return results;
 }
 __name(parseAveSearch, "parseAveSearch");
+function parseAveCandidateIDs(html) {
+  const ids = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /(?:dvd|ppv)(?:%2F|\/)detail(?:%3F|\?)pro(?:%3D|=)(\d+)/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1]);
+      ids.push(m[1]);
+      if (ids.length >= 8) break;
+    }
+  }
+  return ids;
+}
+__name(parseAveCandidateIDs, "parseAveCandidateIDs");
 var aveProvider = {
   name: "AVE",
   priority: 998,
@@ -5980,9 +5998,46 @@ var aveProvider = {
     return keyword.trim().toUpperCase();
   },
   async searchMovie(keyword) {
-    const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));
-    const r = await fetchPage(url, { providerName: "AVE" });
-    return parseAveSearch(r.text, url);
+    const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
+    let ids = [];
+    for (const template of [DDG_URL, DDG_LITE_URL, BING_URL]) {
+      try {
+        const r = await fetchText(template.replace("%s", q), {
+          providerName: "AVE"
+        });
+        ids = parseAveCandidateIDs(r.text);
+      } catch {
+        ids = [];
+      }
+      if (ids.length > 0) break;
+    }
+    if (ids.length === 0) {
+      const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));
+      const r = await fetchPage(url, { providerName: "AVE" });
+      return parseAveSearch(r.text, url);
+    }
+    const settled = await Promise.allSettled(
+      ids.slice(0, 5).map((id) => aveProvider.getMovieInfoByID(id))
+    );
+    const infos = [];
+    for (const s of settled) {
+      if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
+        infos.push(s.value);
+      }
+    }
+    const norm = /* @__PURE__ */ __name((s) => s.toUpperCase().replace(/[-_\s]/g, ""), "norm");
+    const kw = norm(keyword);
+    const numberLike = /^[A-Z]+\d+$/.test(kw) || /^\d+$/.test(kw);
+    let kept = infos;
+    if (numberLike) {
+      kept = infos.filter((i) => norm(i.number) === kw);
+    } else if (keyword) {
+      const sub = infos.filter(
+        (i) => i.title.includes(keyword) || i.actors.some((a) => a.includes(keyword)) || i.genres.some((g) => g.includes(keyword))
+      );
+      if (sub.length > 0) kept = sub;
+    }
+    return kept.map((i) => movieInfoToSearchResult(i));
   }
 };
 

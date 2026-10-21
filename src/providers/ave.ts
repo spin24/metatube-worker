@@ -9,6 +9,7 @@ import {
   MovieSearcher,
   ProviderError,
   isValidMovieInfo,
+  movieInfoToSearchResult,
 } from "../types";
 import {
   absURL,
@@ -16,6 +17,7 @@ import {
   collectFields,
   collectPairsSeq,
   fetchPage,
+  fetchText,
   parseDateLoose,
 } from "../lib/scrape";
 import { isSpecial, parseRuntime } from "../lib/textutil";
@@ -24,6 +26,16 @@ const MOVIE_URL =
   "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
 const SEARCH_URL =
   "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
+// The site's own /dvd/search is hard-gated by a reCAPTCHA v2
+// ("verifybot") for datacenter egress — no cookie or header avoids
+// it. Search is therefore resolved through web search engines: a
+// site:-restricted query finds candidate detail pages, and each
+// candidate is verified against its real metadata (the engine page
+// text also mentions unrelated "related" products, so unverified
+// hits would be false positives).
+const DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
+const DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
+const BING_URL = "https://www.bing.com/search?q=%s";
 
 /** Port of the Go parserNumber(): number from a jacket image URL. */
 export function aveParseNumber(s: string): string {
@@ -171,6 +183,26 @@ export async function parseAveSearch(html: string, pageURL: string): Promise<Mov
   return results;
 }
 
+/**
+ * Extract candidate `pro` IDs from a search-engine results page.
+ * Result links are redirect-wrapped and URL-encoded (uddg=...), so
+ * both the encoded (%2Fdetail%3Fpro%3D) and plain forms are matched.
+ */
+export function parseAveCandidateIDs(html: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const re = /(?:dvd|ppv)(?:%2F|\/)detail(?:%3F|\?)pro(?:%3D|=)(\d+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1]);
+      ids.push(m[1]);
+      if (ids.length >= 8) break;
+    }
+  }
+  return ids;
+}
+
 export const aveProvider: MovieProvider & MovieSearcher = {
   name: "AVE",
   priority: 998,
@@ -222,8 +254,51 @@ export const aveProvider: MovieProvider & MovieSearcher = {
   },
 
   async searchMovie(keyword: string): Promise<MovieSearchResult[]> {
-    const url = SEARCH_URL.replace("%s", encodeURIComponent(keyword));
-    const r = await fetchPage(url, { providerName: "AVE" });
-    return parseAveSearch(r.text, url);
+    const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
+    let ids: string[] = [];
+    for (const template of [DDG_URL, DDG_LITE_URL, BING_URL]) {
+      try {
+        const r = await fetchText(template.replace("%s", q), {
+          providerName: "AVE",
+        });
+        ids = parseAveCandidateIDs(r.text);
+      } catch {
+        ids = [];
+      }
+      if (ids.length > 0) break;
+    }
+    if (ids.length === 0) {
+      // Last resort: the site's own search (works only if the egress
+      // IP is not bot-gated).
+      const url = SEARCH_URL.replace("%s", encodeURIComponent(keyword));
+      const r = await fetchPage(url, { providerName: "AVE" });
+      return parseAveSearch(r.text, url);
+    }
+
+    const settled = await Promise.allSettled(
+      ids.slice(0, 5).map((id) => aveProvider.getMovieInfoByID(id)),
+    );
+    const infos: MovieInfo[] = [];
+    for (const s of settled) {
+      if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
+        infos.push(s.value);
+      }
+    }
+    const norm = (s: string) => s.toUpperCase().replace(/[-_\s]/g, "");
+    const kw = norm(keyword);
+    const numberLike = /^[A-Z]+\d+$/.test(kw) || /^\d+$/.test(kw);
+    let kept = infos;
+    if (numberLike) {
+      kept = infos.filter((i) => norm(i.number) === kw);
+    } else if (keyword) {
+      const sub = infos.filter(
+        (i) =>
+          i.title.includes(keyword) ||
+          i.actors.some((a) => a.includes(keyword)) ||
+          i.genres.some((g) => g.includes(keyword)),
+      );
+      if (sub.length > 0) kept = sub;
+    }
+    return kept.map((i) => movieInfoToSearchResult(i));
   },
 };

@@ -150,8 +150,13 @@ handled there).
   cells off presentational attributes, and its spec rows are read by
   regex because the page is one nest of layout tables.
 - **AVE** takes IDs from the `pro` query param; search numbers come
-  from jacket image filenames. AVE search may hit the site's
-  verifybot interstitial from some egress IPs.
+  from jacket image filenames. The native `/dvd/search` is hard-gated
+  by a reCAPTCHA v2 (verifybot) for datacenter egress, so search is
+  resolved through web search engines instead: a `site:`-restricted
+  DuckDuckGo (Lite/Bing fallbacks) query finds candidate detail
+  pages, and each candidate is verified against its real metadata
+  before being returned — for number-like keywords only exact number
+  matches survive.
 - **SOD** reproduces the age-gate flow (follow the enter link with
   the page as Referer, parse that body) and fails lookups whose cover
   is still the `now_*.jpg` placeholder, as Go does.
