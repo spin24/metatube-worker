@@ -141,12 +141,15 @@ export function searchResultsFromWorks(works: AvbaseWork[]): MovieSearchResult[]
     const products = sortProductsDesc(work.products ?? []);
     const chosen = products.find((p) => KNOWN_SOURCES.has(p.source));
     if (!chosen) continue; // no suitable source provider -> ignore the work
+    const joinedID = joinPrefixID(work.prefix, work.work_id);
     const result: MovieSearchResult = {
-      id: joinPrefixID(work.prefix, work.work_id),
+      id: joinedID,
       number: work.work_id,
       title: work.title ?? "",
       provider: "AVBASE",
-      homepage: MOVIE_URL + work.work_id,
+      // Canonical homepage carries the prefix (/works/premium:PGD-568);
+      // the bare number URL 404s on avbase.net (upstream PR #383).
+      homepage: MOVIE_URL + joinedID,
       actors: (work.actors ?? []).map((a) => a.name).filter(Boolean),
       thumb_url: chosen.thumbnail_url ?? "",
       cover_url: chosen.image_url ?? "",
@@ -236,7 +239,9 @@ export class AvbaseProvider implements MovieProvider {
     }
     info.id = finalID;
     info.provider = this.name;
-    info.homepage = rawURL;
+    // Canonical homepage from the final id, not the request URL: the
+    // work record's prefixed id is the only form avbase.net serves.
+    info.homepage = MOVIE_URL + finalID;
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
     }
