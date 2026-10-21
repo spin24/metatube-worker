@@ -61,3 +61,11 @@ CREATE TABLE IF NOT EXISTS actor_metadata (
 -- Exact-name lookups back the actor search DB fallback path.
 CREATE INDEX IF NOT EXISTS idx_actor_metadata_name
   ON actor_metadata (provider, name);
+
+-- Gfriends pre-indexed dataset (name -> JSON array of photo URLs).
+-- Populated by tools/load-gfriends.py via /admin/gfriends/load;
+-- the load endpoint also creates this table if missing.
+CREATE TABLE IF NOT EXISTS gfriends_actors (
+  name   TEXT PRIMARY KEY,
+  images TEXT NOT NULL
+);

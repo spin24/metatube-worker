@@ -49,6 +49,7 @@ import { FanzaProvider } from "./providers/fanza";
 import { JavbusProvider } from "./providers/javbus";
 import { AvbaseProvider } from "./providers/avbase";
 import { AvleagueProvider } from "./providers/av-league";
+import { GfriendsProvider, bindGfriendsDB, GFRIENDS_TABLE } from "./providers/gfriends";
 import { pondoProviders } from "./providers/pondo-core";
 import { caribProviders } from "./providers/carib-core";
 import { site0930Providers } from "./providers/site0930";
@@ -108,7 +109,7 @@ function getProvider(name: string): MovieProvider {
 }
 
 const actorProviders = new Map<string, ActorProvider>();
-for (const p of [new AvleagueProvider()]) {
+for (const p of [new AvleagueProvider(), new GfriendsProvider()]) {
   actorProviders.set(p.name.toUpperCase(), p);
 }
 
@@ -249,6 +250,7 @@ function actorProviderForURL(rawURL: string): ActorProvider | null {
   try {
     const host = new URL(rawURL).hostname;
     if (host.includes("av-league.com")) return actorProviders.get("AV-LEAGUE") ?? null;
+    if (host.includes("github.com")) return actorProviders.get("GFRIENDS") ?? null;
   } catch {
     // not a URL
   }
@@ -256,6 +258,66 @@ function actorProviderForURL(rawURL: string): ActorProvider | null {
 }
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Gfriends reads its pre-indexed dataset from D1; bind the (per-
+// isolate constant) DB handle before any actor route runs.
+app.use("/v1/actors/*", async (c, next) => {
+  bindGfriendsDB(c.env.DB);
+  await next();
+});
+
+function requireAdminKey(c: { env: Env; req: { header(n: string): string | undefined } }): void {
+  if (!c.env.ADMIN_KEY) {
+    throw new ProviderError("admin endpoints disabled", "not_found");
+  }
+  if (c.req.header("x-admin-key") !== c.env.ADMIN_KEY) {
+    throw new ProviderError("unauthorized", "invalid");
+  }
+}
+
+// One-time dataset loader for Gfriends (see tools/load-gfriends.py).
+// Guarded by the ADMIN_KEY secret; delete the secret after loading
+// and these routes go inert.
+app.post("/admin/gfriends/load", async (c) => {
+  requireAdminKey(c);
+  const body = await c.req
+    .json<{ clear?: boolean; rows?: { name?: string; images?: string[] }[] }>()
+    .catch(() => ({}) as { clear?: boolean; rows?: { name?: string; images?: string[] }[] });
+  const rows = (body.rows ?? []).filter(
+    (r) => typeof r.name === "string" && r.name !== "" && Array.isArray(r.images),
+  );
+  const db = c.env.DB;
+  await db.exec(
+    `CREATE TABLE IF NOT EXISTS ${GFRIENDS_TABLE} (name TEXT PRIMARY KEY, images TEXT NOT NULL)`,
+  );
+  if (body.clear) {
+    await db.exec(`DELETE FROM ${GFRIENDS_TABLE}`);
+  }
+  if (rows.length > 0) {
+    const stmt = db.prepare(
+      `INSERT OR REPLACE INTO ${GFRIENDS_TABLE} (name, images) VALUES (?, ?)`,
+    );
+    await db.batch(
+      rows.map((r) => stmt.bind(r.name, JSON.stringify(r.images))),
+    );
+  }
+  const total = await db
+    .prepare(`SELECT COUNT(*) AS n FROM ${GFRIENDS_TABLE}`)
+    .first<{ n: number }>();
+  return c.json({ data: { inserted: rows.length, total: total?.n ?? 0 } });
+});
+
+app.get("/admin/gfriends/stats", async (c) => {
+  requireAdminKey(c);
+  try {
+    const total = await c.env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM ${GFRIENDS_TABLE}`)
+      .first<{ n: number }>();
+    return c.json({ data: { total: total?.n ?? 0 } });
+  } catch {
+    return c.json({ data: { total: 0 } });
+  }
+});
 
 function dedupeSearchResults(results: MovieSearchResult[]): MovieSearchResult[] {
   const seen = new Set<string>();

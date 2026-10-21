@@ -13,8 +13,10 @@ Scope of this port, by design:
   FC2CMADB. KIN8 and FC2PPVDB were removed: KIN8 was abandoned after
   its upstream restructure broke every movie URL, and fc2ppvdb.com
   shut down (FC2CMADB is its successor and takes its place).
-- **One actor provider: AV-LEAGUE** — actor info + actor search with
-  the same lazy D1 cache semantics (`actor_metadata` table).
+- **Two actor providers: AV-LEAGUE and Gfriends** — actor info +
+  actor search with the same lazy D1 cache semantics
+  (`actor_metadata` table). Gfriends reads a pre-indexed D1 table
+  (see the Actors section).
 - **No image pipeline** — no pigo face detection, no cropping, no goimagehash,
   no jpegli. Image URLs are returned exactly as the provider serves them.
 - **D1 instead of GORM + SQLite/PostgreSQL** for the metadata cache.
@@ -193,7 +195,7 @@ JAVFREE wp-json search get their first live test with the deploy
 that ships them — their extractors are validated locally against
 real engine/REST responses.
 
-### Actors (AV-LEAGUE)
+### Actors (AV-LEAGUE, Gfriends)
 `GET /v1/actors/AV-LEAGUE/{id}`, `POST /v1/actors/AV-LEAGUE/lookup` and
 `GET /v1/actors/search?q=&provider=&fallback=` mirror the movie engine:
 lazy D1 cache in `actor_metadata`, keyword split into names on
@@ -203,10 +205,16 @@ provider priority only. Profiles are scraped from av-league.com actress
 pages (name, aliases, measurements/cup, height, blood type, birthday,
 debut date, nationality, profile image URL).
 
-The other Go actor providers are not ported: Gfriends keeps its whole
-index in one 6.5 MB Filetree.json (parsing it per cold start does not
-fit the free tier's 10 ms CPU budget — it would need a pre-indexed D1
-import), and ThePornDB requires a personal API token.
+**Gfriends** (priority 999) is photos-only, as in Go: an actor's ID is
+her name and a lookup returns every dataset photo whose filename stem
+equals it (search is exact-name only). The dataset is one 6.5 MB
+Filetree.json — unparseable within the free tier's 10 ms CPU budget —
+so it is pre-indexed into the `gfriends_actors` D1 table (~34k names)
+by `tools/load-gfriends.py`, which posts batches to the key-guarded
+`POST /admin/gfriends/load` endpoint (create an `ADMIN_KEY` secret,
+run the loader once, then delete the secret; the endpoint creates
+the table itself). ThePornDB's actor provider is not ported: it
+requires a personal API token.
 
 Errors: `404` not found, `400` invalid input, `502` upstream failure,
 returned as `{ "error": "..." }`.

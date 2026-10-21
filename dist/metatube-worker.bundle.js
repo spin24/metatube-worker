@@ -1899,14 +1899,14 @@ function rowToMovieInfo(row) {
   };
 }
 __name(rowToMovieInfo, "rowToMovieInfo");
-async function getMovieInfoFromDB(db, provider, id) {
-  const row = await db.prepare("SELECT * FROM movie_metadata WHERE provider = ? AND id = ? COLLATE NOCASE").bind(provider, id).first();
+async function getMovieInfoFromDB(db2, provider, id) {
+  const row = await db2.prepare("SELECT * FROM movie_metadata WHERE provider = ? AND id = ? COLLATE NOCASE").bind(provider, id).first();
   return row ? rowToMovieInfo(row) : null;
 }
 __name(getMovieInfoFromDB, "getMovieInfoFromDB");
-async function saveMovieInfoToDB(db, info) {
+async function saveMovieInfoToDB(db2, info) {
   const now = Math.floor(Date.now() / 1e3);
-  await db.prepare(
+  await db2.prepare(
     `INSERT INTO movie_metadata (
          provider, id, number, title, summary, homepage, director, actors,
          thumb_url, cover_url, preview_video_url, preview_video_hls_url,
@@ -1959,11 +1959,11 @@ async function saveMovieInfoToDB(db, info) {
   ).run();
 }
 __name(saveMovieInfoToDB, "saveMovieInfoToDB");
-async function searchMovieFromDB(db, keyword, providerName) {
+async function searchMovieFromDB(db2, keyword, providerName) {
   const scoped = providerName !== void 0;
-  const stmt = scoped ? db.prepare(
+  const stmt = scoped ? db2.prepare(
     "SELECT * FROM movie_metadata WHERE provider = ? AND (number = ? COLLATE NOCASE OR id = ? COLLATE NOCASE)"
-  ).bind(providerName, keyword, keyword) : db.prepare(
+  ).bind(providerName, keyword, keyword) : db2.prepare(
     "SELECT * FROM movie_metadata WHERE number = ? COLLATE NOCASE OR id = ? COLLATE NOCASE"
   ).bind(keyword, keyword);
   const { results } = await stmt.all();
@@ -1991,14 +1991,14 @@ function rowToActorInfo(row) {
   };
 }
 __name(rowToActorInfo, "rowToActorInfo");
-async function getActorInfoFromDB(db, provider, id) {
-  const row = await db.prepare("SELECT * FROM actor_metadata WHERE provider = ? AND id = ? COLLATE NOCASE").bind(provider, id).first();
+async function getActorInfoFromDB(db2, provider, id) {
+  const row = await db2.prepare("SELECT * FROM actor_metadata WHERE provider = ? AND id = ? COLLATE NOCASE").bind(provider, id).first();
   return row ? rowToActorInfo(row) : null;
 }
 __name(getActorInfoFromDB, "getActorInfoFromDB");
-async function saveActorInfoToDB(db, info) {
+async function saveActorInfoToDB(db2, info) {
   const now = Math.floor(Date.now() / 1e3);
-  await db.prepare(
+  await db2.prepare(
     `INSERT INTO actor_metadata (
          provider, id, name, homepage, summary, hobby, skill, blood_type,
          cup_size, measurements, nationality, height, aliases, images,
@@ -2042,8 +2042,8 @@ async function saveActorInfoToDB(db, info) {
   ).run();
 }
 __name(saveActorInfoToDB, "saveActorInfoToDB");
-async function searchActorFromDB(db, keyword, providerName) {
-  const { results } = await db.prepare(
+async function searchActorFromDB(db2, keyword, providerName) {
+  const { results } = await db2.prepare(
     "SELECT * FROM actor_metadata WHERE provider = ? AND name = ? COLLATE NOCASE"
   ).bind(providerName, keyword).all();
   return results.map(rowToActorInfo).filter(isValidActorInfo).map(actorInfoToSearchResult);
@@ -3348,6 +3348,99 @@ var AvleagueProvider = class {
       throw new ProviderError(`av-league search http ${resp.status}`, "upstream");
     }
     return parseAvleagueSearchPage(await resp.text(), url);
+  }
+};
+
+// src/providers/gfriends.ts
+var BASE_URL3 = "https://github.com/gfriends/gfriends";
+var GFRIENDS_TABLE = "gfriends_actors";
+var boundDB = null;
+function bindGfriendsDB(db2) {
+  boundDB = db2;
+}
+__name(bindGfriendsDB, "bindGfriendsDB");
+function db() {
+  if (!boundDB) {
+    throw new ProviderError("gfriends index unavailable", "upstream");
+  }
+  return boundDB;
+}
+__name(db, "db");
+function formatHomepage(id) {
+  return `${BASE_URL3}?gfriends-id=${encodeURIComponent(id)}`;
+}
+__name(formatHomepage, "formatHomepage");
+var GfriendsProvider = class {
+  static {
+    __name(this, "GfriendsProvider");
+  }
+  name = "Gfriends";
+  priority = 999;
+  normalizeActorID(id) {
+    return id.trim();
+  }
+  parseActorIDFromURL(rawURL) {
+    try {
+      return new URL(rawURL).searchParams.get("gfriends-id");
+    } catch {
+      return null;
+    }
+  }
+  async getActorInfoByID(id) {
+    const name = this.normalizeActorID(id);
+    if (!name) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    const row = await db().prepare(`SELECT images FROM ${GFRIENDS_TABLE} WHERE name = ?`).bind(name).first();
+    if (!row) {
+      throw new ProviderError(`actor not found: ${name}`, "not_found");
+    }
+    let images = [];
+    try {
+      const parsed = JSON.parse(row.images);
+      if (Array.isArray(parsed)) {
+        images = parsed.filter((u) => typeof u === "string");
+      }
+    } catch {
+      images = [];
+    }
+    if (images.length === 0) {
+      throw new ProviderError(`actor not found: ${name}`, "not_found");
+    }
+    return {
+      id: name,
+      name,
+      provider: this.name,
+      homepage: formatHomepage(name),
+      summary: "",
+      hobby: "",
+      skill: "",
+      blood_type: "",
+      cup_size: "",
+      measurements: "",
+      nationality: "",
+      height: 0,
+      aliases: [],
+      images,
+      birthday: "",
+      debut_date: ""
+    };
+  }
+  async getActorInfoByURL(rawURL) {
+    const id = this.parseActorIDFromURL(rawURL);
+    if (!id) {
+      throw new ProviderError(
+        `cannot parse actor id from url: ${rawURL}`,
+        "invalid"
+      );
+    }
+    return this.getActorInfoByID(id);
+  }
+  async searchActor(keyword) {
+    try {
+      const info = await this.getActorInfoByID(keyword);
+      return [actorInfoToSearchResult(info)];
+    } catch {
+      return [];
+    }
   }
 };
 
@@ -6745,7 +6838,7 @@ function getProvider(name) {
 }
 __name(getProvider, "getProvider");
 var actorProviders = /* @__PURE__ */ new Map();
-for (const p of [new AvleagueProvider()]) {
+for (const p of [new AvleagueProvider(), new GfriendsProvider()]) {
   actorProviders.set(p.name.toUpperCase(), p);
 }
 function getActorProvider(name) {
@@ -6852,12 +6945,59 @@ function actorProviderForURL(rawURL) {
   try {
     const host = new URL(rawURL).hostname;
     if (host.includes("av-league.com")) return actorProviders.get("AV-LEAGUE") ?? null;
+    if (host.includes("github.com")) return actorProviders.get("GFRIENDS") ?? null;
   } catch {
   }
   return null;
 }
 __name(actorProviderForURL, "actorProviderForURL");
 var app = new Hono3();
+app.use("/v1/actors/*", async (c, next) => {
+  bindGfriendsDB(c.env.DB);
+  await next();
+});
+function requireAdminKey(c) {
+  if (!c.env.ADMIN_KEY) {
+    throw new ProviderError("admin endpoints disabled", "not_found");
+  }
+  if (c.req.header("x-admin-key") !== c.env.ADMIN_KEY) {
+    throw new ProviderError("unauthorized", "invalid");
+  }
+}
+__name(requireAdminKey, "requireAdminKey");
+app.post("/admin/gfriends/load", async (c) => {
+  requireAdminKey(c);
+  const body = await c.req.json().catch(() => ({}));
+  const rows = (body.rows ?? []).filter(
+    (r) => typeof r.name === "string" && r.name !== "" && Array.isArray(r.images)
+  );
+  const db2 = c.env.DB;
+  await db2.exec(
+    `CREATE TABLE IF NOT EXISTS ${GFRIENDS_TABLE} (name TEXT PRIMARY KEY, images TEXT NOT NULL)`
+  );
+  if (body.clear) {
+    await db2.exec(`DELETE FROM ${GFRIENDS_TABLE}`);
+  }
+  if (rows.length > 0) {
+    const stmt = db2.prepare(
+      `INSERT OR REPLACE INTO ${GFRIENDS_TABLE} (name, images) VALUES (?, ?)`
+    );
+    await db2.batch(
+      rows.map((r) => stmt.bind(r.name, JSON.stringify(r.images)))
+    );
+  }
+  const total = await db2.prepare(`SELECT COUNT(*) AS n FROM ${GFRIENDS_TABLE}`).first();
+  return c.json({ data: { inserted: rows.length, total: total?.n ?? 0 } });
+});
+app.get("/admin/gfriends/stats", async (c) => {
+  requireAdminKey(c);
+  try {
+    const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM ${GFRIENDS_TABLE}`).first();
+    return c.json({ data: { total: total?.n ?? 0 } });
+  } catch {
+    return c.json({ data: { total: 0 } });
+  }
+});
 function dedupeSearchResults(results) {
   const seen = /* @__PURE__ */ new Set();
   const out = [];

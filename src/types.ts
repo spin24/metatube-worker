@@ -158,4 +158,6 @@ export class ProviderError extends Error {
 
 export interface Env {
   DB: D1Database;
+  /** Optional secret guarding the /admin/* one-time loaders. */
+  ADMIN_KEY?: string;
 }
