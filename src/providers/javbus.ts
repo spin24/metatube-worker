@@ -17,6 +17,7 @@ import {
   ProviderError,
   isValidMovieInfo,
   isValidSearchResult,
+  movieInfoToSearchResult,
 } from "../types";
 import { isSpecial } from "../lib/textutil";
 
@@ -28,7 +29,7 @@ export class JavbusProvider implements MovieProvider {
   readonly priority = 995;
 
   normalizeMovieID(id: string): string {
-    return id.trim().toUpperCase();
+    return javbusNormalizeID(id);
   }
 
   parseMovieIDFromURL(rawURL: string): string | null {
@@ -61,7 +62,7 @@ export class JavbusProvider implements MovieProvider {
           "User-Agent":
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
           Referer: BASE_URL,
-          Cookie: "dv=1; existmag=all",
+          Cookie: "dv=1; existmag=all; age=verified",
         },
         redirect: "follow",
       });
@@ -254,11 +255,23 @@ const SEARCH_UNCENSORED_URL = "https://www.javbus.com/ja/uncensored/search/";
 // JavBus accepts regular-looking numbers even when they are "special".
 const JAVBUS_KEYWORD_RE = /^([\d-_]{4,}|[a-z]{1,4}\d{2,4}|heyzo[-_].+)$/i;
 
+// LABEL_NUMBER_RE matches a number without the dash between the label
+// and the number, e.g. ssis277 (upstream PR #382).
+const LABEL_NUMBER_RE = /^([a-z]{2,})(\d+)$/i;
+
+/** JavBus page URLs always contain the dashed number form. */
+export function javbusNormalizeID(id: string): string {
+  return id.trim().replace(LABEL_NUMBER_RE, "$1-$2").toUpperCase();
+}
+
 export function javbusNormalizeKeyword(keyword: string): string {
-  if (isSpecial(keyword) && !JAVBUS_KEYWORD_RE.test(keyword)) {
-    return ""; // JavBus has no those special contents.
+  if (isSpecial(keyword)) {
+    if (!JAVBUS_KEYWORD_RE.test(keyword)) {
+      return ""; // JavBus has no those special contents.
+    }
+    return keyword.toUpperCase();
   }
-  return keyword.toUpperCase();
+  return javbusNormalizeID(keyword);
 }
 
 export async function javbusSearchMovie(
@@ -275,7 +288,7 @@ export async function javbusSearchMovie(
           "User-Agent":
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
           Referer: BASE_URL,
-          Cookie: "dv=1; existmag=all",
+          Cookie: "dv=1; existmag=all; age=verified",
         },
         redirect: "follow",
       });
@@ -298,6 +311,22 @@ export async function javbusSearchMovie(
     throw lastError instanceof ProviderError
       ? lastError
       : new ProviderError(`javbus search failed: ${String(lastError)}`, "upstream");
+  }
+  // JavBus search sometimes omits movies whose detail pages are still
+  // accessible by number (upstream issue #381, PR #382). Fall back to
+  // the detail page directly, but only for keywords JavBus may have.
+  if (results.length === 0) {
+    const id = javbusNormalizeKeyword(keyword);
+    if (id) {
+      try {
+        const info = await new JavbusProvider().getMovieInfoByID(id);
+        if (isValidMovieInfo(info)) {
+          results.push(movieInfoToSearchResult(info));
+        }
+      } catch {
+        // not fetchable by ID either — keep the empty result
+      }
+    }
   }
   return results;
 }

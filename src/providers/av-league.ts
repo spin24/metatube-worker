@@ -1,14 +1,15 @@
 // AV-LEAGUE actor provider — slim port of provider/av-league from
-// metatube-sdk-go. av-league.com is an actress database: profile pages at
-// /actress/{numeric-id}.html and a plain-HTML search endpoint. Parsing
-// uses HTMLRewriter (streaming) like the JavBus provider.
+// metatube-sdk-go. av-league.com is an actress database: profile pages
+// at /actress/{numeric-id}.html. Profile parsing uses HTMLRewriter
+// (streaming) like the JavBus provider; search traverses the static
+// actress list pages instead (see searchAvleagueByName).
 //
-// Two porting notes:
+// Porting notes:
 // - The raw HTML has no <tbody> (colly/goquery inserts one implicitly,
 //   HTMLRewriter does not), so table selectors omit it.
-// - Search cards: the Go code reads the lazy-load attribute data-layzr;
-//   the site now also serves plain src — we take data-layzr first, then
-//   src, so images survive either markup.
+// - List/profile images may use the lazy-load attribute data-layzr or
+//   plain src — we take data-layzr first, then src, so images survive
+//   either markup.
 
 import {
   ActorInfo,
@@ -20,7 +21,6 @@ import {
 
 const BASE_URL = "https://www.av-league.com/";
 const ACTOR_URL = "https://www.av-league.com/actress/";
-const SEARCH_URL = "https://www.av-league.com/search/search.php?k=";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -199,64 +199,131 @@ export async function parseAvleagueActorPage(
 }
 
 /** Parse one search-results page. Exported for parser tests. */
-export async function parseAvleagueSearchPage(
-  html: string,
-  pageURL: string,
-): Promise<ActorSearchResult[]> {
-  const results: ActorSearchResult[] = [];
-  let picHref = "";
-  let picImg = "";
-  let nameHref = "";
-  let nameText = "";
+/** One actor entry parsed from a list page (name + ID + list avatar). */
+export interface AvleagueIndexEntry {
+  id: string;
+  name: string;
+  image: string;
+}
 
-  const flush = () => {
-    const href = nameHref || picHref;
-    if (href && nameText.trim()) {
-      const homepage = new URL(href, pageURL).toString();
-      const id = parseIDFromHomepage(homepage);
-      if (id) {
-        results.push({
-          id,
-          name: nameText.trim(),
-          provider: "AV-LEAGUE",
-          homepage,
-          aliases: [],
-          images: picImg ? [new URL(picImg, pageURL).toString()] : [],
-        });
-      }
-    }
-    picHref = "";
-    picImg = "";
-    nameHref = "";
-    nameText = "";
-  };
+const ACTOR_LIST_URL =
+  "https://www.av-league.com/actress-list/all-3/all_all_default_";
+const ACTOR_LIST_MAX_PAGE = 31;
 
-  const rewriter = new HTMLRewriter()
-    .on(".l-pic a", {
-      element(el) {
-        // A new card's picture link: flush any un-flushed previous card.
-        if (nameHref || nameText) flush();
-        picHref = el.getAttribute("href") ?? "";
-      },
-    })
-    .on(".l-pic a img", {
-      element(el) {
-        picImg = el.getAttribute("data-layzr") || el.getAttribute("src") || "";
-      },
-    })
-    .on(".l-name a", {
-      element(el) {
-        nameHref = el.getAttribute("href") ?? "";
-      },
-      text(t) {
-        nameText += t.text;
-        if (t.lastInTextNode) flush();
-      },
+/**
+ * Parse one actress list page into index entries. Cards look like:
+ * <a href="/actress/{id}.html"><div class="l-pic"><img alt="{name}"
+ * src="..."> — the avatar may use data-layzr instead of src; take
+ * data-layzr first, then src, like the info parser does.
+ */
+export function parseAvleagueListPage(html: string): AvleagueIndexEntry[] {
+  const entries: AvleagueIndexEntry[] = [];
+  const seen = new Set<string>();
+  const cardRe =
+    /<a href="\/actress\/(\d+)\.html">\s*<div class="l-pic">\s*<img([^>]*)>/g;
+  for (const m of html.matchAll(cardRe)) {
+    const id = m[1] as string;
+    if (seen.has(id)) continue;
+    const attrs = m[2] as string;
+    const name = /alt="([^"]*)"/.exec(attrs)?.[1]?.trim() ?? "";
+    if (!name) continue;
+    seen.add(id);
+    const img =
+      /data-layzr="([^"]*)"/.exec(attrs)?.[1] ??
+      /src="([^"]*)"/.exec(attrs)?.[1] ??
+      "";
+    entries.push({
+      id,
+      name,
+      image: img ? new URL(img, BASE_URL).toString() : "",
     });
+  }
+  return entries;
+}
 
-  await rewriter.transform(new Response(html)).text();
-  flush();
-  return results.filter(isValidActorSearchResult);
+// The site's in-page search is no longer server-rendered (upstream
+// PR #375), so search traverses the static actress list pages and
+// matches by name. The full index (~31 pages) is built once per
+// isolate and cached in memory; later searches are pure lookups.
+let actorIndexCache: AvleagueIndexEntry[] | null = null;
+let actorIndexBuilding: Promise<AvleagueIndexEntry[]> | null = null;
+
+async function buildActorIndex(): Promise<AvleagueIndexEntry[]> {
+  const pages = await Promise.allSettled(
+    Array.from({ length: ACTOR_LIST_MAX_PAGE }, (_, i) =>
+      fetch(`${ACTOR_LIST_URL}${i + 1}.html`, {
+        headers: { "User-Agent": UA },
+      }).then(async (r) => (r.ok ? parseAvleagueListPage(await r.text()) : [])),
+    ),
+  );
+  const all: AvleagueIndexEntry[] = [];
+  for (const p of pages) {
+    if (p.status === "fulfilled") all.push(...p.value);
+  }
+  if (all.length === 0) {
+    throw new ProviderError(
+      "av-league actor index empty: site may be unreachable",
+      "upstream",
+    );
+  }
+  return all;
+}
+
+function getActorIndex(): Promise<AvleagueIndexEntry[]> {
+  if (actorIndexCache) return Promise.resolve(actorIndexCache);
+  if (!actorIndexBuilding) {
+    actorIndexBuilding = buildActorIndex()
+      .then((entries) => {
+        actorIndexCache = entries;
+        return entries;
+      })
+      .finally(() => {
+        actorIndexBuilding = null;
+      });
+  }
+  return actorIndexBuilding;
+}
+
+/** Name comparison key (upstream PR #375): drop spaces, drop the
+ *  trailing "ari" the site appends to romaji names, lowercase. */
+function normalizeActorName(s: string): string {
+  let t = s.trim().replaceAll(" ", "").replaceAll("　", "");
+  if (t.endsWith("ari")) t = t.slice(0, -3);
+  return t.toLowerCase();
+}
+
+export async function searchAvleagueByName(
+  keyword: string,
+): Promise<ActorSearchResult[]> {
+  const target = normalizeActorName(keyword);
+  if (!target) {
+    throw new ProviderError("invalid keyword", "invalid");
+  }
+  const entries = await getActorIndex();
+  const results: ActorSearchResult[] = [];
+  for (const e of entries) {
+    const nn = normalizeActorName(e.name);
+    if (nn !== target && !nn.includes(target)) continue;
+    const result: ActorSearchResult = {
+      id: e.id,
+      name: e.name,
+      provider: "AV-LEAGUE",
+      homepage: ACTOR_URL + e.id + ".html",
+      aliases: [],
+      images: e.image ? [e.image] : [],
+    };
+    if (isValidActorSearchResult(result)) results.push(result);
+  }
+  // Exact matches first; shorter names are the likelier precise match.
+  results.sort((a, b) => {
+    const na = normalizeActorName(a.name);
+    const nb = normalizeActorName(b.name);
+    const ea = na === target;
+    const eb = nb === target;
+    if (ea !== eb) return ea ? -1 : 1;
+    return na.length - nb.length;
+  });
+  return results;
 }
 
 function parseIDFromHomepage(homepage: string): string {
@@ -314,16 +381,10 @@ export class AvleagueProvider implements ActorProvider {
   }
 
   async searchActor(keyword: string): Promise<ActorSearchResult[]> {
-    const url = SEARCH_URL + encodeURIComponent(keyword);
-    let resp: Response;
-    try {
-      resp = await fetch(url, { headers: { "User-Agent": UA } });
-    } catch (e) {
-      throw new ProviderError(`av-league search failed: ${String(e)}`, "upstream");
+    const kw = keyword.trim();
+    if (!kw) {
+      throw new ProviderError("invalid keyword", "invalid");
     }
-    if (!resp.ok) {
-      throw new ProviderError(`av-league search http ${resp.status}`, "upstream");
-    }
-    return parseAvleagueSearchPage(await resp.text(), url);
+    return searchAvleagueByName(kw);
   }
 }

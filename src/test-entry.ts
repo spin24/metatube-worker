@@ -11,7 +11,7 @@ import { extractSearchProducts } from "./providers/fanza";
 import { movieInfoFromWork, searchResultsFromWorks } from "./providers/avbase";
 import {
   parseAvleagueActorPage,
-  parseAvleagueSearchPage,
+  parseAvleagueListPage,
 } from "./providers/av-league";
 import { parsePondoDetail, pondoConfigs, sprintf } from "./providers/pondo-core";
 import { caribConfigs, parseCaribPage } from "./providers/carib-core";
@@ -102,12 +102,9 @@ export default {
         );
         return Response.json(info);
       }
-      case "/parse/av-league-search": {
-        const results = await parseAvleagueSearchPage(
-          html,
-          "https://www.av-league.com/search/search.php?k=x",
-        );
-        return Response.json({ count: results.length, results });
+      case "/parse/av-league-list": {
+        const entries = parseAvleagueListPage(html);
+        return Response.json({ count: entries.length, entries });
       }
       // --- batch-1 providers: parse a saved detail page/JSON ---
       // /parse/<key>?name=<provider>&url=<page-url>&id=<id>

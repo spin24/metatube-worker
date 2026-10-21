@@ -100,14 +100,23 @@ export const heydougaProvider: MovieProvider = {
   priority: 1000,
 
   normalizeMovieID(id: string): string {
-    const m = /^(?:heydouga[-_])?(\d{4}-[a-z\d]+)$/i.exec(id.trim());
-    return m ? m[1] : "";
+    // Real site IDs are {studio#}-{slug}; slug shapes vary (upstream
+    // PR #375, stats over 168 samples): pure digits (450, 2489),
+    // ppv-date with hyphen or underscore (ppv-010325-001,
+    // ppv-010324_001), letter-mixed (ppv-gol056, r019). The old regex
+    // required a 4-digit studio and a dashless slug.
+    const m = /^(?:heydouga[-_])?(\d+)-([a-z\d][a-z\d_-]*)$/i.exec(id.trim());
+    return m ? `${m[1]}-${m[2].toLowerCase()}` : "";
   },
 
   parseMovieIDFromURL(rawURL: string): string | null {
     try {
-      const m = /\/(\d+)\/(\d+)\/index\.html/.exec(new URL(rawURL).pathname);
-      return m ? `${m[1]}-${m[2]}` : null;
+      const path = new URL(rawURL).pathname;
+      // Prefer the real /moviepages/{studio}/{slug}/index.html form.
+      const m = /\/moviepages\/(\d+)\/([a-z\d][a-z\d_-]*)\/index\.html/i.exec(path);
+      if (m) return `${m[1]}-${m[2].toLowerCase()}`;
+      const old = /\/(\d+)\/(\d+)\/index\.html/.exec(path);
+      return old ? `${old[1]}-${old[2]}` : null;
     } catch {
       return null;
     }
@@ -116,7 +125,10 @@ export const heydougaProvider: MovieProvider = {
   async getMovieInfoByID(id: string): Promise<MovieInfo> {
     const normalized = heydougaProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    const [a, b] = normalized.split("-", 2);
+    // Split on the FIRST hyphen only: slugs may contain hyphens.
+    const cut = normalized.indexOf("-");
+    const a = normalized.slice(0, cut);
+    const b = normalized.slice(cut + 1);
     return heydougaProvider.getMovieInfoByURL(
       MOVIE_URL.replace("%s", a).replace("%s", b),
     );

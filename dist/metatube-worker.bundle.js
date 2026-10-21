@@ -2499,7 +2499,7 @@ var JavbusProvider = class {
   name = "JavBus";
   priority = 995;
   normalizeMovieID(id) {
-    return id.trim().toUpperCase();
+    return javbusNormalizeID(id);
   }
   parseMovieIDFromURL(rawURL) {
     try {
@@ -2528,7 +2528,7 @@ var JavbusProvider = class {
         headers: {
           "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
           Referer: BASE_URL,
-          Cookie: "dv=1; existmag=all"
+          Cookie: "dv=1; existmag=all; age=verified"
         },
         redirect: "follow"
       });
@@ -2686,11 +2686,19 @@ __name(parseRuntimeMinutes, "parseRuntimeMinutes");
 var SEARCH_URL = "https://www.javbus.com/ja/search/";
 var SEARCH_UNCENSORED_URL = "https://www.javbus.com/ja/uncensored/search/";
 var JAVBUS_KEYWORD_RE = /^([\d-_]{4,}|[a-z]{1,4}\d{2,4}|heyzo[-_].+)$/i;
+var LABEL_NUMBER_RE = /^([a-z]{2,})(\d+)$/i;
+function javbusNormalizeID(id) {
+  return id.trim().replace(LABEL_NUMBER_RE, "$1-$2").toUpperCase();
+}
+__name(javbusNormalizeID, "javbusNormalizeID");
 function javbusNormalizeKeyword(keyword) {
-  if (isSpecial(keyword) && !JAVBUS_KEYWORD_RE.test(keyword)) {
-    return "";
+  if (isSpecial(keyword)) {
+    if (!JAVBUS_KEYWORD_RE.test(keyword)) {
+      return "";
+    }
+    return keyword.toUpperCase();
   }
-  return keyword.toUpperCase();
+  return javbusNormalizeID(keyword);
 }
 __name(javbusNormalizeKeyword, "javbusNormalizeKeyword");
 async function javbusSearchMovie(keyword) {
@@ -2704,7 +2712,7 @@ async function javbusSearchMovie(keyword) {
         headers: {
           "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
           Referer: BASE_URL,
-          Cookie: "dv=1; existmag=all"
+          Cookie: "dv=1; existmag=all; age=verified"
         },
         redirect: "follow"
       });
@@ -2725,6 +2733,18 @@ async function javbusSearchMovie(keyword) {
   }
   if (results.length === 0 && lastError) {
     throw lastError instanceof ProviderError ? lastError : new ProviderError(`javbus search failed: ${String(lastError)}`, "upstream");
+  }
+  if (results.length === 0) {
+    const id = javbusNormalizeKeyword(keyword);
+    if (id) {
+      try {
+        const info = await new JavbusProvider().getMovieInfoByID(id);
+        if (isValidMovieInfo(info)) {
+          results.push(movieInfoToSearchResult(info));
+        }
+      } catch {
+      }
+    }
   }
   return results;
 }
@@ -3082,8 +3102,8 @@ var AvbaseProvider = class {
 };
 
 // src/providers/av-league.ts
+var BASE_URL3 = "https://www.av-league.com/";
 var ACTOR_URL = "https://www.av-league.com/actress/";
-var SEARCH_URL2 = "https://www.av-league.com/search/search.php?k=";
 var UA2 = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 function parseAvlDate(s) {
   const full = /(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/.exec(s);
@@ -3237,56 +3257,103 @@ async function parseAvleagueActorPage(html, pageURL, id) {
   return info;
 }
 __name(parseAvleagueActorPage, "parseAvleagueActorPage");
-async function parseAvleagueSearchPage(html, pageURL) {
-  const results = [];
-  let picHref = "";
-  let picImg = "";
-  let nameHref = "";
-  let nameText = "";
-  const flush = /* @__PURE__ */ __name(() => {
-    const href = nameHref || picHref;
-    if (href && nameText.trim()) {
-      const homepage = new URL(href, pageURL).toString();
-      const id = parseIDFromHomepage(homepage);
-      if (id) {
-        results.push({
-          id,
-          name: nameText.trim(),
-          provider: "AV-LEAGUE",
-          homepage,
-          aliases: [],
-          images: picImg ? [new URL(picImg, pageURL).toString()] : []
-        });
-      }
-    }
-    picHref = "";
-    picImg = "";
-    nameHref = "";
-    nameText = "";
-  }, "flush");
-  const rewriter = new HTMLRewriter().on(".l-pic a", {
-    element(el) {
-      if (nameHref || nameText) flush();
-      picHref = el.getAttribute("href") ?? "";
-    }
-  }).on(".l-pic a img", {
-    element(el) {
-      picImg = el.getAttribute("data-layzr") || el.getAttribute("src") || "";
-    }
-  }).on(".l-name a", {
-    element(el) {
-      nameHref = el.getAttribute("href") ?? "";
-    },
-    text(t) {
-      nameText += t.text;
-      if (t.lastInTextNode) flush();
-    }
-  });
-  await rewriter.transform(new Response(html)).text();
-  flush();
-  return results.filter(isValidActorSearchResult);
+var ACTOR_LIST_URL = "https://www.av-league.com/actress-list/all-3/all_all_default_";
+var ACTOR_LIST_MAX_PAGE = 31;
+function parseAvleagueListPage(html) {
+  const entries = [];
+  const seen = /* @__PURE__ */ new Set();
+  const cardRe = /<a href="\/actress\/(\d+)\.html">\s*<div class="l-pic">\s*<img([^>]*)>/g;
+  for (const m of html.matchAll(cardRe)) {
+    const id = m[1];
+    if (seen.has(id)) continue;
+    const attrs = m[2];
+    const name = /alt="([^"]*)"/.exec(attrs)?.[1]?.trim() ?? "";
+    if (!name) continue;
+    seen.add(id);
+    const img = /data-layzr="([^"]*)"/.exec(attrs)?.[1] ?? /src="([^"]*)"/.exec(attrs)?.[1] ?? "";
+    entries.push({
+      id,
+      name,
+      image: img ? new URL(img, BASE_URL3).toString() : ""
+    });
+  }
+  return entries;
 }
-__name(parseAvleagueSearchPage, "parseAvleagueSearchPage");
+__name(parseAvleagueListPage, "parseAvleagueListPage");
+var actorIndexCache = null;
+var actorIndexBuilding = null;
+async function buildActorIndex() {
+  const pages = await Promise.allSettled(
+    Array.from(
+      { length: ACTOR_LIST_MAX_PAGE },
+      (_, i) => fetch(`${ACTOR_LIST_URL}${i + 1}.html`, {
+        headers: { "User-Agent": UA2 }
+      }).then(async (r) => r.ok ? parseAvleagueListPage(await r.text()) : [])
+    )
+  );
+  const all = [];
+  for (const p of pages) {
+    if (p.status === "fulfilled") all.push(...p.value);
+  }
+  if (all.length === 0) {
+    throw new ProviderError(
+      "av-league actor index empty: site may be unreachable",
+      "upstream"
+    );
+  }
+  return all;
+}
+__name(buildActorIndex, "buildActorIndex");
+function getActorIndex() {
+  if (actorIndexCache) return Promise.resolve(actorIndexCache);
+  if (!actorIndexBuilding) {
+    actorIndexBuilding = buildActorIndex().then((entries) => {
+      actorIndexCache = entries;
+      return entries;
+    }).finally(() => {
+      actorIndexBuilding = null;
+    });
+  }
+  return actorIndexBuilding;
+}
+__name(getActorIndex, "getActorIndex");
+function normalizeActorName(s) {
+  let t = s.trim().replaceAll(" ", "").replaceAll("\u3000", "");
+  if (t.endsWith("ari")) t = t.slice(0, -3);
+  return t.toLowerCase();
+}
+__name(normalizeActorName, "normalizeActorName");
+async function searchAvleagueByName(keyword) {
+  const target = normalizeActorName(keyword);
+  if (!target) {
+    throw new ProviderError("invalid keyword", "invalid");
+  }
+  const entries = await getActorIndex();
+  const results = [];
+  for (const e of entries) {
+    const nn = normalizeActorName(e.name);
+    if (nn !== target && !nn.includes(target)) continue;
+    const result = {
+      id: e.id,
+      name: e.name,
+      provider: "AV-LEAGUE",
+      homepage: ACTOR_URL + e.id + ".html",
+      aliases: [],
+      images: e.image ? [e.image] : []
+    };
+    if (isValidActorSearchResult(result)) results.push(result);
+  }
+  results.sort((a, b) => {
+    const na = normalizeActorName(a.name);
+    const nb = normalizeActorName(b.name);
+    const ea = na === target;
+    const eb = nb === target;
+    if (ea !== eb) return ea ? -1 : 1;
+    return na.length - nb.length;
+  });
+  return results;
+}
+__name(searchAvleagueByName, "searchAvleagueByName");
 function parseIDFromHomepage(homepage) {
   try {
     const base = new URL(homepage).pathname.split("/").filter(Boolean).pop() ?? "";
@@ -3340,22 +3407,16 @@ var AvleagueProvider = class {
     return info;
   }
   async searchActor(keyword) {
-    const url = SEARCH_URL2 + encodeURIComponent(keyword);
-    let resp;
-    try {
-      resp = await fetch(url, { headers: { "User-Agent": UA2 } });
-    } catch (e) {
-      throw new ProviderError(`av-league search failed: ${String(e)}`, "upstream");
+    const kw = keyword.trim();
+    if (!kw) {
+      throw new ProviderError("invalid keyword", "invalid");
     }
-    if (!resp.ok) {
-      throw new ProviderError(`av-league search http ${resp.status}`, "upstream");
-    }
-    return parseAvleagueSearchPage(await resp.text(), url);
+    return searchAvleagueByName(kw);
   }
 };
 
 // src/providers/gfriends.ts
-var BASE_URL3 = "https://github.com/gfriends/gfriends";
+var BASE_URL4 = "https://github.com/gfriends/gfriends";
 var GFRIENDS_TABLE = "gfriends_actors";
 var boundDB = null;
 function bindGfriendsDB(db2) {
@@ -3370,7 +3431,7 @@ function db() {
 }
 __name(db, "db");
 function formatHomepage(id) {
-  return `${BASE_URL3}?gfriends-id=${encodeURIComponent(id)}`;
+  return `${BASE_URL4}?gfriends-id=${encodeURIComponent(id)}`;
 }
 __name(formatHomepage, "formatHomepage");
 var GfriendsProvider = class {
@@ -4640,13 +4701,16 @@ var heydougaProvider = {
   name: "HeyDouga",
   priority: 1e3,
   normalizeMovieID(id) {
-    const m = /^(?:heydouga[-_])?(\d{4}-[a-z\d]+)$/i.exec(id.trim());
-    return m ? m[1] : "";
+    const m = /^(?:heydouga[-_])?(\d+)-([a-z\d][a-z\d_-]*)$/i.exec(id.trim());
+    return m ? `${m[1]}-${m[2].toLowerCase()}` : "";
   },
   parseMovieIDFromURL(rawURL) {
     try {
-      const m = /\/(\d+)\/(\d+)\/index\.html/.exec(new URL(rawURL).pathname);
-      return m ? `${m[1]}-${m[2]}` : null;
+      const path = new URL(rawURL).pathname;
+      const m = /\/moviepages\/(\d+)\/([a-z\d][a-z\d_-]*)\/index\.html/i.exec(path);
+      if (m) return `${m[1]}-${m[2].toLowerCase()}`;
+      const old = /\/(\d+)\/(\d+)\/index\.html/.exec(path);
+      return old ? `${old[1]}-${old[2]}` : null;
     } catch {
       return null;
     }
@@ -4654,7 +4718,9 @@ var heydougaProvider = {
   async getMovieInfoByID(id) {
     const normalized = heydougaProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    const [a, b] = normalized.split("-", 2);
+    const cut = normalized.indexOf("-");
+    const a = normalized.slice(0, cut);
+    const b = normalized.slice(cut + 1);
     return heydougaProvider.getMovieInfoByURL(
       MOVIE_URL4.replace("%s", a).replace("%s", b)
     );
@@ -4958,7 +5024,7 @@ var gcolleProvider = {
 
 // src/providers/tokyo-hot.ts
 var MOVIE_URL8 = "https://my.tokyo-hot.com/product/%s/?lang=ja";
-var SEARCH_URL3 = "https://my.tokyo-hot.com/product/?q=%s&x=0&y=0&lang=ja";
+var SEARCH_URL2 = "https://my.tokyo-hot.com/product/?q=%s&x=0&y=0&lang=ja";
 async function parseTokyoHotPage(html, pageURL, id) {
   const info = baseMovieInfo("TOKYO-HOT", id, pageURL);
   info.maker = "TOKYO-HOT";
@@ -5102,7 +5168,7 @@ var tokyohotProvider = {
     return /^[a-z_]*\d+$/i.test(keyword) ? keyword.toLowerCase() : "";
   },
   async searchMovie(keyword) {
-    const url = SEARCH_URL3.replace("%s", encodeURIComponent(keyword));
+    const url = SEARCH_URL2.replace("%s", encodeURIComponent(keyword));
     const r = await fetchPage(url, { providerName: "TOKYO-HOT" });
     const cards = await parseTokyoHotSearchPage(r.text);
     const results = [];
@@ -5138,7 +5204,7 @@ var tokyohotProvider = {
 
 // src/providers/madouqu.ts
 var MOVIE_URL9 = "https://madouqu.com/%s/";
-var SEARCH_URL4 = "https://madouqu.com/?s=%s";
+var SEARCH_URL3 = "https://madouqu.com/?s=%s";
 function extractImgSrc(src) {
   try {
     const u = new URL(src);
@@ -5268,7 +5334,7 @@ var madouquProvider = {
     return keyword.toUpperCase();
   },
   async searchMovie(keyword) {
-    const url = SEARCH_URL4.replace("%s", encodeURIComponent(keyword));
+    const url = SEARCH_URL3.replace("%s", encodeURIComponent(keyword));
     const r = await fetchPage(url, { providerName: "MadouQu" });
     const cards = await parseMadouquSearchPage(r.text);
     const results = [];
@@ -5306,7 +5372,7 @@ var madouquProvider = {
 
 // src/providers/fc2hub.ts
 var MOVIE_URL10 = "https://javten.com/video/%s/id%s/%s";
-var SEARCH_URL5 = "https://javten.com/search?kw=%s";
+var SEARCH_URL4 = "https://javten.com/search?kw=%s";
 function fc2ParseNumber(id) {
   const m = /^(?:FC2(?:[-_\s]?PPV)?[-_\s]?)?(\d+)$/i.exec(id.trim());
   return m ? m[1] : "";
@@ -5412,7 +5478,7 @@ var fc2hubProvider = {
     return fc2ParseNumber(keyword);
   },
   async searchMovie(keyword) {
-    const url = SEARCH_URL5.replace("%s", encodeURIComponent(keyword));
+    const url = SEARCH_URL4.replace("%s", encodeURIComponent(keyword));
     const r = await fetchText(url, { providerName: "fc2hub", redirect: "manual" });
     const loc = r.headers.get("location");
     if (!loc) return [];
@@ -5464,7 +5530,7 @@ __name(raceSearchEngines, "raceSearchEngines");
 
 // src/providers/duga.ts
 var MOVIE_URL11 = "https://duga.jp/ppv/%s/";
-var SEARCH_URL6 = "https://duga.jp/search/=/q=%s/";
+var SEARCH_URL5 = "https://duga.jp/search/=/q=%s/";
 var learnedNumbers = /* @__PURE__ */ new Map();
 var learnedKeywords = /* @__PURE__ */ new Map();
 function normNum(s) {
@@ -5644,7 +5710,7 @@ var dugaProvider = {
     if (ids.length === 0) ids = learnedKeywords.get(kwNorm) ?? [];
     if (ids.length === 0) {
       try {
-        const url = SEARCH_URL6.replace("%s", encodeURIComponent(keyword));
+        const url = SEARCH_URL5.replace("%s", encodeURIComponent(keyword));
         const r = await fetchPage(url, { providerName: "DUGA" });
         ids = await parseDugaSearchIDs(r.text, url);
       } catch {
@@ -5691,7 +5757,7 @@ var dugaProvider = {
 
 // src/providers/mgs.ts
 var MOVIE_URL12 = "https://www.mgstage.com/product/product_detail/%s/";
-var SEARCH_URL7 = "https://www.mgstage.com/search/cSearch.php?search_word=%s";
+var SEARCH_URL6 = "https://www.mgstage.com/search/cSearch.php?search_word=%s";
 var SAMPLE_URL2 = "https://www.mgstage.com/sampleplayer/sampleRespons.php?pid=%s";
 var COOKIE4 = "adc=1";
 function mgsImageSrc(s, thumb) {
@@ -5867,7 +5933,7 @@ var mgsProvider = {
     return keyword.trim().toUpperCase();
   },
   async searchMovie(keyword) {
-    const url = SEARCH_URL7.replace("%s", encodeURIComponent(keyword));
+    const url = SEARCH_URL6.replace("%s", encodeURIComponent(keyword));
     const r = await fetchPage(url, { cookie: COOKIE4, providerName: "MGS" });
     return parseMgsSearch(r.text, url);
   }
@@ -5975,7 +6041,7 @@ var getchuProvider = {
 
 // src/providers/ave.ts
 var MOVIE_URL14 = "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
-var SEARCH_URL8 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
+var SEARCH_URL7 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
 var learnedNumbers2 = /* @__PURE__ */ new Map();
 var learnedKeywords2 = /* @__PURE__ */ new Map();
 function normNum2(s) {
@@ -6194,7 +6260,7 @@ var aveProvider = {
       ids = learnedKeywords2.get(kwNorm) ?? [];
     }
     if (ids.length === 0) {
-      const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));
+      const url = SEARCH_URL7.replace("%s", encodeURIComponent(keyword));
       const r = await fetchPage(url, { providerName: "AVE" });
       return parseAveSearch(r.text, url);
     }
@@ -6235,7 +6301,7 @@ var aveProvider = {
 
 // src/providers/sod.ts
 var MOVIE_URL15 = "https://ec.sod.co.jp/prime/videos/?id=%s";
-var SEARCH_URL9 = "https://ec.sod.co.jp/prime/videos/genre/?search_type=1&sodsearch=%s";
+var SEARCH_URL8 = "https://ec.sod.co.jp/prime/videos/genre/?search_type=1&sodsearch=%s";
 var NOW_IMAGE = /\/thumbnail\/now_\w+\.jpg/;
 function isValidImageURL(s) {
   return !NOW_IMAGE.test(s);
@@ -6413,7 +6479,7 @@ var sodProvider = {
     return keyword.trim().toUpperCase();
   },
   async searchMovie(keyword) {
-    const url = SEARCH_URL9.replace("%s", encodeURIComponent(keyword));
+    const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));
     const page = await fetchSodPage(url);
     return parseSodSearch(page.text, url);
   }
@@ -6421,7 +6487,7 @@ var sodProvider = {
 
 // src/providers/javfree.ts
 var MOVIE_URL16 = "https://javfree.me/%s/%s";
-var SEARCH_URL10 = "https://javfree.me/?s=%s";
+var SEARCH_URL9 = "https://javfree.me/?s=%s";
 var WP_SEARCH_URL = "https://javfree.me/wp-json/wp/v2/search?search=%s&per_page=10";
 function parseWpJsonSearchIDs(jsonText) {
   let data;
@@ -6628,7 +6694,7 @@ var javfreeProvider = {
       }
     }
     const fc2ID = keyword.slice(keyword.lastIndexOf("-") + 1);
-    const url = SEARCH_URL10.replace("%s", encodeURIComponent(fc2ID));
+    const url = SEARCH_URL9.replace("%s", encodeURIComponent(fc2ID));
     const r = await fetchPage(url, { providerName: "JAVFREE" });
     return parseJavfreeSearch(r.text, url, fc2ID);
   }
