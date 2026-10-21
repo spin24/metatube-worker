@@ -235,6 +235,25 @@ it requires a personal API token.
 Errors: `404` not found, `400` invalid input, `502` upstream failure,
 returned as `{ "error": "..." }`.
 
+## Deployment via GitHub (Workers Builds)
+
+Once the D1 database exists and its real id is in `wrangler.toml`,
+the worker can deploy itself on every push:
+
+1. Push this repo to GitHub (public or private).
+2. In the Cloudflare dashboard: Workers & Pages → `metatube-worker`
+   → Settings → **Builds** → Connect → GitHub, pick the repo and the
+   production branch (`main`). Build command: *(empty)*; deploy
+   command: `npx wrangler deploy` (the default).
+3. Push to `main` → Cloudflare installs dependencies, runs wrangler,
+   and deploys. The `wrangler.toml` becomes the source of truth for
+   bindings, observability and the cron trigger; dashboard-set
+   secrets (e.g. `ADMIN_KEY`) survive deploys untouched.
+
+The manual alternative — pasting `dist/metatube-worker.bundle.js`
+into the dashboard code editor — keeps working, but stop mixing
+the two flows once Git deployments are on.
+
 ## Setup
 
 ```bash

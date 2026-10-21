@@ -3,8 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2025-09-01"
 
 # D1 metadata cache (replaces GORM + SQLite/PostgreSQL in the Go version).
-# 1. Run: npm run db:create   -> copy the returned database_id below.
-# 2. Run: npm run db:remote    -> apply schema.sql to the remote database.
+# For wrangler/Git deployments this database_id must be the REAL id of
+# the `metatube` D1 database (dashboard: Workers & Pages -> D1 -> the
+# id shown for the database). It is an identifier, not a secret.
+# Dashboard paste deployments ignore this file and use the binding
+# configured in the dashboard instead.
 [[d1_databases]]
 binding = "DB"
 database_name = "metatube"
