@@ -20,7 +20,7 @@ import {
   fetchText,
   parseDateLoose,
 } from "../lib/scrape";
-import { isSpecial, parseRuntime } from "../lib/textutil";
+import { compareStrings, isSpecial, parseRuntime } from "../lib/textutil";
 
 const MOVIE_URL =
   "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
@@ -255,8 +255,10 @@ export const aveProvider: MovieProvider & MovieSearcher = {
 
   async searchMovie(keyword: string): Promise<MovieSearchResult[]> {
     const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
+    // DDG occasionally answers with a transient empty page, so it is
+    // tried twice before falling through to the other engines.
     let ids: string[] = [];
-    for (const template of [DDG_URL, DDG_LITE_URL, BING_URL]) {
+    for (const template of [DDG_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
       try {
         const r = await fetchText(template.replace("%s", q), {
           providerName: "AVE",
@@ -276,7 +278,7 @@ export const aveProvider: MovieProvider & MovieSearcher = {
     }
 
     const settled = await Promise.allSettled(
-      ids.slice(0, 5).map((id) => aveProvider.getMovieInfoByID(id)),
+      ids.slice(0, 8).map((id) => aveProvider.getMovieInfoByID(id)),
     );
     const infos: MovieInfo[] = [];
     for (const s of settled) {
@@ -289,11 +291,21 @@ export const aveProvider: MovieProvider & MovieSearcher = {
     const numberLike = /^[A-Z]+\d+$/.test(kw) || /^\d+$/.test(kw);
     let kept = infos;
     if (numberLike) {
-      kept = infos.filter((i) => norm(i.number) === kw);
+      const exact = infos.filter((i) => norm(i.number) === kw);
+      if (exact.length > 0) {
+        kept = exact;
+      } else {
+        // Near misses (e.g. MKD-S03 for MKBD-S03) beat an empty page.
+        const near = infos.filter(
+          (i) => compareStrings(norm(i.number), kw) >= 0.8,
+        );
+        if (near.length > 0) kept = near;
+      }
     } else if (keyword) {
       const sub = infos.filter(
         (i) =>
           i.title.includes(keyword) ||
+          i.summary.includes(keyword) ||
           i.actors.some((a) => a.includes(keyword)) ||
           i.genres.some((g) => g.includes(keyword)),
       );

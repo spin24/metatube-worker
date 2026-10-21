@@ -6000,7 +6000,7 @@ var aveProvider = {
   async searchMovie(keyword) {
     const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
     let ids = [];
-    for (const template of [DDG_URL, DDG_LITE_URL, BING_URL]) {
+    for (const template of [DDG_URL, DDG_URL, DDG_LITE_URL, BING_URL]) {
       try {
         const r = await fetchText(template.replace("%s", q), {
           providerName: "AVE"
@@ -6017,7 +6017,7 @@ var aveProvider = {
       return parseAveSearch(r.text, url);
     }
     const settled = await Promise.allSettled(
-      ids.slice(0, 5).map((id) => aveProvider.getMovieInfoByID(id))
+      ids.slice(0, 8).map((id) => aveProvider.getMovieInfoByID(id))
     );
     const infos = [];
     for (const s of settled) {
@@ -6030,10 +6030,18 @@ var aveProvider = {
     const numberLike = /^[A-Z]+\d+$/.test(kw) || /^\d+$/.test(kw);
     let kept = infos;
     if (numberLike) {
-      kept = infos.filter((i) => norm(i.number) === kw);
+      const exact = infos.filter((i) => norm(i.number) === kw);
+      if (exact.length > 0) {
+        kept = exact;
+      } else {
+        const near = infos.filter(
+          (i) => compareStrings(norm(i.number), kw) >= 0.8
+        );
+        if (near.length > 0) kept = near;
+      }
     } else if (keyword) {
       const sub = infos.filter(
-        (i) => i.title.includes(keyword) || i.actors.some((a) => a.includes(keyword)) || i.genres.some((g) => g.includes(keyword))
+        (i) => i.title.includes(keyword) || i.summary.includes(keyword) || i.actors.some((a) => a.includes(keyword)) || i.genres.some((g) => g.includes(keyword))
       );
       if (sub.length > 0) kept = sub;
     }
