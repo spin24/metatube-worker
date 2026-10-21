@@ -55,7 +55,6 @@ import { site0930Providers } from "./providers/site0930";
 import { falenoProviders } from "./providers/faleno-core";
 import { heyzoProvider } from "./providers/heyzo";
 import { heydougaProvider } from "./providers/heydouga";
-import { kin8Provider } from "./providers/kin8";
 import { mywifeProvider } from "./providers/mywife";
 import { pcolleProvider } from "./providers/pcolle";
 import { gcolleProvider } from "./providers/gcolle";
@@ -68,7 +67,8 @@ import { getchuProvider } from "./providers/getchu";
 import { aveProvider } from "./providers/ave";
 import { sodProvider } from "./providers/sod";
 import { javfreeProvider } from "./providers/javfree";
-import { fc2ppvdbProvider } from "./providers/fc2ppvdb";
+import { fc2Provider } from "./providers/fc2";
+import { fc2cmadbProvider } from "./providers/fc2cmadb";
 
 const providers = new Map<string, MovieProvider>();
 for (const p of [
@@ -81,7 +81,6 @@ for (const p of [
   ...falenoProviders,
   heyzoProvider,
   heydougaProvider,
-  kin8Provider,
   mywifeProvider,
   pcolleProvider,
   gcolleProvider,
@@ -94,7 +93,8 @@ for (const p of [
   aveProvider,
   sodProvider,
   javfreeProvider,
-  fc2ppvdbProvider,
+  fc2Provider,
+  fc2cmadbProvider,
 ]) {
   providers.set(p.name.toUpperCase(), p);
 }
@@ -365,7 +365,6 @@ const HOST_PROVIDERS: [string, string][] = [
   ["caribbeancom.com", "CARIBBEANCOM"],
   ["heyzo.com", "HEYZO"],
   ["heydouga.com", "HEYDOUGA"],
-  ["kin8tengoku.com", "KIN8"],
   ["mywife.cc", "MYWIFE"],
   ["pcolle.com", "PCOLLE"],
   ["gcolle.net", "GCOLLE"],
@@ -383,7 +382,8 @@ const HOST_PROVIDERS: [string, string][] = [
   ["aventertainments.com", "AVE"],
   ["sod.co.jp", "SOD"],
   ["javfree.me", "JAVFREE"],
-  ["fc2ppvdb.com", "FC2PPVDB"],
+  ["fc2.com", "FC2"],
+  ["fc2cmadb.com", "FC2CMADB"],
 ];
 
 function providerForURL(rawURL: string): MovieProvider | null {

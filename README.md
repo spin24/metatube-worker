@@ -7,9 +7,12 @@ Scope of this port, by design:
 
 - **30 movie providers**: FANZA, JavBus, AVBASE, the batch-1 set —
   1Pondo, 10musume, PACOPACOMAMA, MURAMURA, Caribbeancom, CaribbeancomPR,
-  HEYZO, HeyDouga, KIN8, MYWIFE, Pcolle, Gcolle, C0930, H0930, H4610,
-  FALENO, DAHLIA, TOKYO-HOT, MadouQu, fc2hub — and the batch-2 set —
-  DUGA, MGS, Getchu, AVE, SOD, JAVFREE, FC2PPVDB.
+  HEYZO, HeyDouga, MYWIFE, Pcolle, Gcolle, C0930, H0930, H4610,
+  FALENO, DAHLIA, TOKYO-HOT, MadouQu, fc2hub — the batch-2 set —
+  DUGA, MGS, Getchu, AVE, SOD, JAVFREE — and FC2 (official) plus
+  FC2CMADB. KIN8 and FC2PPVDB were removed: KIN8 was abandoned after
+  its upstream restructure broke every movie URL, and fc2ppvdb.com
+  shut down (FC2CMADB is its successor and takes its place).
 - **One actor provider: AV-LEAGUE** — actor info + actor search with
   the same lazy D1 cache semantics (`actor_metadata` table).
 - **No image pipeline** — no pigo face detection, no cropping, no goimagehash,
@@ -136,7 +139,9 @@ handled there).
   positional `#content` XPaths duplicate the same fields), and search
   is the redirect probe (`/search?kw=` → video page).
 - Not yet verified from any egress (blocked in the dev sandbox, first
-  real test is production): FALENO, KIN8, Pcolle, fc2hub.
+  real test is production): FALENO, Pcolle. FC2 and FC2CMADB parsers
+  are validated locally against real pages from the dev sandbox;
+  their first Cloudflare-egress test is the deploy that ships them.
 
 ### Batch-2 providers (7)
 
@@ -171,11 +176,17 @@ handled there).
   (`/wp-json/wp/v2/search`), which returns post URLs directly;
   a search-engine relay and the original `?s=` page remain as
   fallbacks.
-- **FC2PPVDB** field rows have bare-text labels (`販売者：` etc.)
-  followed by a span value, extracted by regex.
+- **FC2** (official, priority 1000) scrapes adult.contents.fc2.com
+  article pages, Go-faithful: hidden spam spans are stripped from
+  the title, the summary comes from its iframe subdocument, and a
+  mismatched 商品ID row fails the lookup. Info only, as in Go.
+- **FC2CMADB** (998, FC2PPVDB's replacement) parses the article
+  record out of the site's Inertia props JSON (`data-page` script
+  block): title, release date, duration, writer as maker, tags as
+  genres; the cover is the w800 rendition of the FC2 thumbnail.
 
 Not yet verified from the dev sandbox (blocked there; first real
-test is production, as with batch 1): MGS, SOD, FC2PPVDB. AVE's
+test is production, as with batch 1): MGS, SOD. AVE's
 engine-relay search is verified live (flaky per request by nature;
 it leans on its learned-mapping fast path). The DUGA relay and
 JAVFREE wp-json search get their first live test with the deploy

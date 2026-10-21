@@ -18,7 +18,8 @@ import { parse0930Page, site0930Configs } from "./providers/site0930";
 import { falenoConfigs, parseFalenoPage } from "./providers/faleno-core";
 import { parseHeyzoPage } from "./providers/heyzo";
 import { parseHeydougaPage } from "./providers/heydouga";
-import { parseKin8Page } from "./providers/kin8";
+import { parseFc2Page } from "./providers/fc2";
+import { parseCmadbPage } from "./providers/fc2cmadb";
 import { parseMywifePage } from "./providers/mywife";
 import { parsePcollePage } from "./providers/pcolle";
 import { parseGcollePage } from "./providers/gcolle";
@@ -31,7 +32,6 @@ import { parseGetchuPage } from "./providers/getchu";
 import { parseAvePage, parseAveSearch } from "./providers/ave";
 import { parseSodPage, parseSodSearch } from "./providers/sod";
 import { parseJavfreePage, parseJavfreeSearch, parseWpJsonSearchIDs, parseJavfreeCandidateIDs } from "./providers/javfree";
-import { parseFc2ppvdbPage } from "./providers/fc2ppvdb";
 
 function htmlResponse(html: string): Response {
   return new Response(html, {
@@ -139,10 +139,10 @@ export default {
         const id = url.searchParams.get("id") ?? "";
         return Response.json(await parseHeydougaPage(html, pageURL, id));
       }
-      case "/parse/kin8": {
+      case "/parse/fc2": {
         const pageURL = url.searchParams.get("url") ?? "";
         const id = url.searchParams.get("id") ?? "";
-        return Response.json(await parseKin8Page(html, pageURL, id));
+        return Response.json(await parseFc2Page(html, pageURL, id));
       }
       case "/parse/mywife": {
         const pageURL = url.searchParams.get("url") ?? "";
@@ -229,10 +229,10 @@ export default {
         const fc2id = url.searchParams.get("fc2id") ?? "";
         return Response.json(await parseJavfreeSearch(html, u, fc2id));
       }
-      case "/parse/fc2ppvdb": {
+      case "/parse/fc2cmadb": {
         const u = url.searchParams.get("url") ?? "";
         const id = url.searchParams.get("id") ?? "";
-        return Response.json(await parseFc2ppvdbPage(html, u, id));
+        return Response.json(parseCmadbPage(html, u, id));
       }
       case "/parse/fc2hub": {
         const pageURL = url.searchParams.get("url") ?? "";

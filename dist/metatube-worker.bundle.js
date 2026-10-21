@@ -4529,135 +4529,8 @@ var heydougaProvider = {
   }
 };
 
-// src/providers/kin8.ts
-var MOVIE_URL5 = "https://www.kin8tengoku.com/moviepages/%s/index.html";
-var REVIEW_URL = "https://m-template.heyzo.com/snstb/api/review?%s";
-async function parseKin8Page(html, pageURL, id) {
-  const info = baseMovieInfo("KIN8", id, pageURL);
-  info.number = `KIN8-${id}`;
-  info.maker = "\u91D1\u9AEA\u5929\u570B";
-  const fields = await collectFields(html, [
-    { key: "title", selector: "#sub_main p.sub_title, #sub_main p.sub_title_vip", mode: "text" },
-    { key: "keywords", selector: 'meta[name="keywords"]', mode: "attr", attr: "content" },
-    { key: "summary", selector: "#comment", mode: "text" },
-    { key: "gallery", selector: "#gallery div a, #gallery_vip div a", mode: "attrs", attr: "href" },
-    { key: "reviewSite", selector: "#review_list", mode: "attr", attr: "data-d2p_site_id" },
-    { key: "reviewSeq", selector: "#review_list", mode: "attr", attr: "data-movie_seq" }
-  ]);
-  info.title = fields.title.trim();
-  if (!info.title) info.title = fields.keywords.trim();
-  info.summary = fields.summary.trim();
-  for (const href of fields.gallery) {
-    if (href) info.preview_images.push(absURL(pageURL, href));
-  }
-  const rows = await collectPairs(html, "td.movie_table_td", "td.movie_table_td2");
-  for (const row of rows) {
-    switch (row.label) {
-      case "\u30E2\u30C7\u30EB":
-        info.actors = row.valueTexts;
-        break;
-      case "\u30AB\u30C6\u30B4\u30EA\u30FC":
-        info.genres = row.valueTexts;
-        break;
-      case "\u518D\u751F\u6642\u9593":
-        info.runtime = parseRuntime(row.value);
-        break;
-      case "\u66F4\u65B0\u65E5":
-        info.release_date = parseDateLoose(row.value);
-        break;
-    }
-  }
-  const img = /imgurl\s*=\s*'(.+?)';/.exec(html);
-  if (img) {
-    info.cover_url = absURL(pageURL, img[1]);
-    info.thumb_url = info.cover_url;
-  }
-  const limit = /samplelimit\s*=\s*(\d+);/.exec(html);
-  if (limit) {
-    const sampleLimit = parseInt(limit[1], 10);
-    const videoID = parseInt(info.id, 10);
-    if (sampleLimit > 0 && videoID > 0) {
-      const videos = [...html.matchAll(/videourl\s*=\s*'(.+?)'/g)].map((m) => m[1]);
-      if (videos.length === 1) {
-        info.preview_video_url = absURL(pageURL, videos[0]);
-      } else if (videos.length >= 2) {
-        info.preview_video_url = absURL(
-          pageURL,
-          videoID >= sampleLimit ? videos[0] : videos[1]
-        );
-      }
-    }
-  }
-  const siteId = fields.reviewSite;
-  const movieSeq = fields.reviewSeq;
-  if (siteId && movieSeq) {
-    try {
-      const ts = String(Date.now());
-      const q = new URLSearchParams({
-        callback: `jQuery_${ts}`,
-        site_id: siteId,
-        movie_seq: movieSeq,
-        json: "1",
-        _: ts
-      });
-      const r = await fetchText(REVIEW_URL.replace("%s", q.toString()), {
-        providerName: "KIN8"
-      });
-      if (r.status >= 200 && r.status < 300) {
-        const m = /\w+\((.+?)\);/s.exec(r.text);
-        if (m) {
-          const data = JSON.parse(m[1]);
-          if (Array.isArray(data) && data.length > 0) {
-            info.score = data.reduce((sum, x) => sum + (x.user_rating || 0), 0) / data.length;
-          }
-        }
-      }
-    } catch {
-    }
-  }
-  return info;
-}
-__name(parseKin8Page, "parseKin8Page");
-var kin8Provider = {
-  name: "KIN8",
-  priority: 1e3,
-  normalizeMovieID(id) {
-    const m = /^(?:kin8[-_])?(\d+)$/i.exec(id.trim());
-    return m ? m[1] : "";
-  },
-  parseMovieIDFromURL(rawURL) {
-    try {
-      const parts = new URL(rawURL).pathname.split("/").filter(Boolean);
-      const id = parts.length >= 2 ? parts[parts.length - 2] : "";
-      return id ? decodeURIComponent(id) : null;
-    } catch {
-      return null;
-    }
-  },
-  async getMovieInfoByID(id) {
-    const normalized = kin8Provider.normalizeMovieID(id);
-    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return kin8Provider.getMovieInfoByURL(
-      MOVIE_URL5.replace("%s", normalized.padStart(4, "0"))
-    );
-  },
-  async getMovieInfoByURL(rawURL) {
-    const id = kin8Provider.parseMovieIDFromURL(rawURL);
-    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
-    const r = await fetchPage(rawURL, {
-      providerName: "KIN8",
-      notFoundMessage: `movie not found: ${id}`
-    });
-    const info = await parseKin8Page(r.text, rawURL, id);
-    if (!isValidMovieInfo(info)) {
-      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
-    }
-    return info;
-  }
-};
-
 // src/providers/mywife.ts
-var MOVIE_URL6 = "https://mywife.cc/teigaku/model/no/%s";
+var MOVIE_URL5 = "https://mywife.cc/teigaku/model/no/%s";
 async function parseMywifePage(html, pageURL, id) {
   const info = baseMovieInfo("MYWIFE", id, pageURL);
   info.number = `MYWIFE-${id}`;
@@ -4708,7 +4581,7 @@ var mywifeProvider = {
   async getMovieInfoByID(id) {
     const normalized = mywifeProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return mywifeProvider.getMovieInfoByURL(MOVIE_URL6.replace("%s", normalized));
+    return mywifeProvider.getMovieInfoByURL(MOVIE_URL5.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
     const id = mywifeProvider.parseMovieIDFromURL(rawURL);
@@ -4726,7 +4599,7 @@ var mywifeProvider = {
 };
 
 // src/providers/pcolle.ts
-var MOVIE_URL7 = "https://www.pcolle.com/product/detail/?product_id=%s";
+var MOVIE_URL6 = "https://www.pcolle.com/product/detail/?product_id=%s";
 var COOKIE3 = "AGE_CONF=1";
 async function parsePcollePage(html, pageURL, id) {
   const info = baseMovieInfo("Pcolle", id, pageURL);
@@ -4791,7 +4664,7 @@ var pcolleProvider = {
   async getMovieInfoByID(id) {
     const normalized = pcolleProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return pcolleProvider.getMovieInfoByURL(MOVIE_URL7.replace("%s", encodeURIComponent(normalized)));
+    return pcolleProvider.getMovieInfoByURL(MOVIE_URL6.replace("%s", encodeURIComponent(normalized)));
   },
   async getMovieInfoByURL(rawURL) {
     const id = pcolleProvider.parseMovieIDFromURL(rawURL);
@@ -4810,7 +4683,7 @@ var pcolleProvider = {
 };
 
 // src/providers/gcolle.ts
-var MOVIE_URL8 = "https://gcolle.net/adult/contents/%s";
+var MOVIE_URL7 = "https://gcolle.net/adult/contents/%s";
 var SCORE_URL = "https://rating.gcolle.net/ratings/products/%s.js";
 function str3(v) {
   return typeof v === "string" ? v : "";
@@ -4881,7 +4754,7 @@ var gcolleProvider = {
   async getMovieInfoByID(id) {
     const normalized = gcolleProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return gcolleProvider.getMovieInfoByURL(MOVIE_URL8.replace("%s", normalized));
+    return gcolleProvider.getMovieInfoByURL(MOVIE_URL7.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
     const id = gcolleProvider.parseMovieIDFromURL(rawURL);
@@ -4899,7 +4772,7 @@ var gcolleProvider = {
 };
 
 // src/providers/tokyo-hot.ts
-var MOVIE_URL9 = "https://my.tokyo-hot.com/product/%s/?lang=ja";
+var MOVIE_URL8 = "https://my.tokyo-hot.com/product/%s/?lang=ja";
 var SEARCH_URL3 = "https://my.tokyo-hot.com/product/?q=%s&x=0&y=0&lang=ja";
 async function parseTokyoHotPage(html, pageURL, id) {
   const info = baseMovieInfo("TOKYO-HOT", id, pageURL);
@@ -5025,7 +4898,7 @@ var tokyohotProvider = {
   async getMovieInfoByID(id) {
     const normalized = tokyohotProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError("invalid id", "invalid");
-    return tokyohotProvider.getMovieInfoByURL(MOVIE_URL9.replace("%s", normalized));
+    return tokyohotProvider.getMovieInfoByURL(MOVIE_URL8.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
     const id = tokyohotProvider.parseMovieIDFromURL(rawURL);
@@ -5079,7 +4952,7 @@ var tokyohotProvider = {
 };
 
 // src/providers/madouqu.ts
-var MOVIE_URL10 = "https://madouqu.com/%s/";
+var MOVIE_URL9 = "https://madouqu.com/%s/";
 var SEARCH_URL4 = "https://madouqu.com/?s=%s";
 function extractImgSrc(src) {
   try {
@@ -5190,7 +5063,7 @@ var madouquProvider = {
   async getMovieInfoByID(id) {
     const normalized = madouquProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError("invalid id", "invalid");
-    return madouquProvider.getMovieInfoByURL(MOVIE_URL10.replace("%s", normalized));
+    return madouquProvider.getMovieInfoByURL(MOVIE_URL9.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
     const id = madouquProvider.parseMovieIDFromURL(rawURL);
@@ -5247,7 +5120,7 @@ var madouquProvider = {
 };
 
 // src/providers/fc2hub.ts
-var MOVIE_URL11 = "https://javten.com/video/%s/id%s/%s";
+var MOVIE_URL10 = "https://javten.com/video/%s/id%s/%s";
 var SEARCH_URL5 = "https://javten.com/search?kw=%s";
 function fc2ParseNumber(id) {
   const m = /^(?:FC2(?:[-_\s]?PPV)?[-_\s]?)?(\d+)$/i.exec(id.trim());
@@ -5310,7 +5183,7 @@ async function parseFc2hubPage(html, pageURL, id) {
   info.thumb_url = info.cover_url;
   if (info.id && info.number.length > 4 && info.title) {
     const a = info.id.split("-", 2)[0];
-    info.homepage = MOVIE_URL11.replace("%s", a).replace("%s", info.number.slice(4)).replace("%s", encodeURIComponent(info.title));
+    info.homepage = MOVIE_URL10.replace("%s", a).replace("%s", info.number.slice(4)).replace("%s", encodeURIComponent(info.title));
   }
   return info;
 }
@@ -5334,7 +5207,7 @@ var fc2hubProvider = {
     if (ss.length !== 2 || !ss[0] || !ss[1]) {
       throw new ProviderError(`invalid id: ${id}`, "invalid");
     }
-    const url = MOVIE_URL11.replace("%s", ss[0]).replace("%s", ss[1]).replace("%s", "%20");
+    const url = MOVIE_URL10.replace("%s", ss[0]).replace("%s", ss[1]).replace("%s", "%20");
     return fc2hubProvider.getMovieInfoByURL(url);
   },
   async getMovieInfoByURL(rawURL) {
@@ -5397,7 +5270,7 @@ async function raceSearchEngines(providerName, queryVariants, extract) {
 __name(raceSearchEngines, "raceSearchEngines");
 
 // src/providers/duga.ts
-var MOVIE_URL12 = "https://duga.jp/ppv/%s/";
+var MOVIE_URL11 = "https://duga.jp/ppv/%s/";
 var SEARCH_URL6 = "https://duga.jp/search/=/q=%s/";
 var learnedNumbers = /* @__PURE__ */ new Map();
 var learnedKeywords = /* @__PURE__ */ new Map();
@@ -5539,7 +5412,7 @@ var dugaProvider = {
   async getMovieInfoByID(id) {
     const normalized = dugaProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return dugaProvider.getMovieInfoByURL(MOVIE_URL12.replace("%s", normalized));
+    return dugaProvider.getMovieInfoByURL(MOVIE_URL11.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
     const id = dugaProvider.parseMovieIDFromURL(rawURL);
@@ -5624,7 +5497,7 @@ var dugaProvider = {
 };
 
 // src/providers/mgs.ts
-var MOVIE_URL13 = "https://www.mgstage.com/product/product_detail/%s/";
+var MOVIE_URL12 = "https://www.mgstage.com/product/product_detail/%s/";
 var SEARCH_URL7 = "https://www.mgstage.com/search/cSearch.php?search_word=%s";
 var SAMPLE_URL2 = "https://www.mgstage.com/sampleplayer/sampleRespons.php?pid=%s";
 var COOKIE4 = "adc=1";
@@ -5780,7 +5653,7 @@ var mgsProvider = {
   async getMovieInfoByID(id) {
     const normalized = mgsProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return mgsProvider.getMovieInfoByURL(MOVIE_URL13.replace("%s", normalized));
+    return mgsProvider.getMovieInfoByURL(MOVIE_URL12.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
     const id = mgsProvider.parseMovieIDFromURL(rawURL);
@@ -5808,7 +5681,7 @@ var mgsProvider = {
 };
 
 // src/providers/getchu.ts
-var MOVIE_URL14 = "https://dl.getchu.com/i/item%s";
+var MOVIE_URL13 = "https://dl.getchu.com/i/item%s";
 function stripTags(s) {
   return decodeEntities(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
@@ -5890,7 +5763,7 @@ var getchuProvider = {
   async getMovieInfoByID(id) {
     const normalized = getchuProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return getchuProvider.getMovieInfoByURL(MOVIE_URL14.replace("%s", normalized));
+    return getchuProvider.getMovieInfoByURL(MOVIE_URL13.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
     const id = getchuProvider.parseMovieIDFromURL(rawURL);
@@ -5908,7 +5781,7 @@ var getchuProvider = {
 };
 
 // src/providers/ave.ts
-var MOVIE_URL15 = "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
+var MOVIE_URL14 = "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
 var SEARCH_URL8 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
 var DDG_URL2 = "https://html.duckduckgo.com/html/?q=%s";
 var DDG_LITE_URL2 = "https://lite.duckduckgo.com/lite/?q=%s";
@@ -6080,7 +5953,7 @@ var aveProvider = {
     const normalized = aveProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
     return aveProvider.getMovieInfoByURL(
-      MOVIE_URL15.replace("%s", encodeURIComponent(normalized))
+      MOVIE_URL14.replace("%s", encodeURIComponent(normalized))
     );
   },
   async getMovieInfoByURL(rawURL) {
@@ -6188,7 +6061,7 @@ var aveProvider = {
 };
 
 // src/providers/sod.ts
-var MOVIE_URL16 = "https://ec.sod.co.jp/prime/videos/?id=%s";
+var MOVIE_URL15 = "https://ec.sod.co.jp/prime/videos/?id=%s";
 var SEARCH_URL9 = "https://ec.sod.co.jp/prime/videos/genre/?search_type=1&sodsearch=%s";
 var NOW_IMAGE = /\/thumbnail\/now_\w+\.jpg/;
 function isValidImageURL(s) {
@@ -6344,13 +6217,13 @@ var sodProvider = {
     const normalized = sodProvider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
     return sodProvider.getMovieInfoByURL(
-      MOVIE_URL16.replace("%s", encodeURIComponent(normalized))
+      MOVIE_URL15.replace("%s", encodeURIComponent(normalized))
     );
   },
   async getMovieInfoByURL(rawURL) {
     const id = sodProvider.parseMovieIDFromURL(rawURL);
     if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
-    const pageURL = MOVIE_URL16.replace("%s", encodeURIComponent(id));
+    const pageURL = MOVIE_URL15.replace("%s", encodeURIComponent(id));
     const page = await fetchSodPage(pageURL);
     const info = await parseSodPage(page.text, pageURL, id);
     info.homepage = rawURL;
@@ -6374,7 +6247,7 @@ var sodProvider = {
 };
 
 // src/providers/javfree.ts
-var MOVIE_URL17 = "https://javfree.me/%s/%s";
+var MOVIE_URL16 = "https://javfree.me/%s/%s";
 var SEARCH_URL10 = "https://javfree.me/?s=%s";
 var WP_SEARCH_URL = "https://javfree.me/wp-json/wp/v2/search?search=%s&per_page=10";
 function parseWpJsonSearchIDs(jsonText) {
@@ -6514,7 +6387,7 @@ var javfreeProvider = {
       throw new ProviderError(`invalid id: ${id}`, "invalid");
     }
     return javfreeProvider.getMovieInfoByURL(
-      MOVIE_URL17.replace("%s", parts[0]).replace("%s", `fc2-ppv-${parts[1]}`)
+      MOVIE_URL16.replace("%s", parts[0]).replace("%s", `fc2-ppv-${parts[1]}`)
     );
   },
   async getMovieInfoByURL(rawURL) {
@@ -6588,91 +6461,242 @@ var javfreeProvider = {
   }
 };
 
-// src/providers/fc2ppvdb.ts
-var MOVIE_URL18 = "https://fc2ppvdb.com/articles/%s";
+// src/providers/fc2.ts
+var MOVIE_URL17 = "https://adult.contents.fc2.com/article/%s/";
 function stripTags3(s) {
   return decodeEntities(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 __name(stripTags3, "stripTags");
-function textPieces(inner) {
-  return inner.split(/<[^>]+>/).map((t) => decodeEntities(t).trim()).filter(Boolean);
+function cleanFc2Title(innerHTML) {
+  const cleaned = innerHTML.replace(
+    /<span[^>]*style="[^"]*(?:zoom:\s*0\.01|display:\s*none|overflow:\s*hidden)[^"]*"[^>]*>[\s\S]*?<\/span>/gi,
+    ""
+  );
+  return stripTags3(cleaned);
 }
-__name(textPieces, "textPieces");
-async function parseFc2ppvdbPage(html, pageURL, id) {
-  const info = baseMovieInfo("FC2PPVDB", id, pageURL);
+__name(cleanFc2Title, "cleanFc2Title");
+async function parseFc2Page(html, pageURL, id) {
+  const info = baseMovieInfo("FC2", id, pageURL);
   info.number = `FC2-${id}`;
-  try {
-    const fields = await collectFields(html, [
-      { key: "cover", selector: "main a > img", mode: "attr", attr: "src" },
-      { key: "title", selector: "main h2 a", mode: "text" },
-      { key: "ogTitle", selector: 'meta[property="og:title"]', mode: "attr", attr: "content" },
-      { key: "ogImage", selector: 'meta[property="og:image"]', mode: "attr", attr: "content" }
-    ]);
-    if (fields.cover) info.cover_url = absURL(pageURL, fields.cover);
-    info.title = fields.title.trim();
-    if (!info.title) info.title = fields.ogTitle.trim();
-    if (!info.cover_url && fields.ogImage) {
-      info.cover_url = absURL(pageURL, fields.ogImage);
+  const h3 = /<div class="items_article_headerInfo"[^>]*>[\s\S]*?<h3>([\s\S]*?)<\/h3>/.exec(
+    html
+  );
+  if (h3) info.title = cleanFc2Title(h3[1]);
+  const fields = await collectFields(html, [
+    {
+      key: "genres",
+      selector: "div.items_article_headerInfo section.items_article_TagArea a",
+      mode: "texts"
+    },
+    {
+      key: "writer",
+      selector: "div.items_article_headerInfo li.items_article_writer a",
+      mode: "text"
+    },
+    {
+      key: "makerLinks",
+      selector: "div.items_article_headerInfo ul li a",
+      mode: "texts"
+    },
+    {
+      key: "dateText",
+      selector: "div.items_article_Releasedate p",
+      mode: "text"
+    },
+    {
+      key: "scoreClass",
+      selector: "li.items_article_StarA a p span",
+      mode: "attr",
+      attr: "class"
+    },
+    {
+      key: "thumb",
+      selector: "div.items_article_MainitemThumb span img",
+      mode: "attr",
+      attr: "src"
+    },
+    {
+      key: "runtimeText",
+      selector: "div.items_article_MainitemThumb p.items_article_info",
+      mode: "text"
+    },
+    {
+      key: "previews",
+      selector: "section.items_article_SampleImages ul li a",
+      mode: "attrs",
+      attr: "href"
     }
-  } catch {
+  ]);
+  info.genres = fields.genres.map((g) => g.trim()).filter(Boolean);
+  const writer = fields.writer.trim();
+  const makerLinks = fields.makerLinks.map((t) => t.trim()).filter(Boolean);
+  info.maker = writer || makerLinks[makerLinks.length - 1] || "";
+  const dateText = fields.dateText.trim();
+  if (dateText) {
+    const tail = dateText.split(":").pop() ?? "";
+    const d = parseDateLoose(tail);
+    if (d) info.release_date = d;
   }
-  info.thumb_url = info.cover_url;
-  const rowRe = /(ID|販売者|女優|モザイク|販売日|収録時間|タグ)：<span[^>]*>([\s\S]*?)<\/span>/g;
-  let m;
-  while ((m = rowRe.exec(html)) !== null) {
-    const label = m[1];
-    const inner = m[2];
-    switch (label) {
-      case "ID":
-        info.id = stripTags3(inner) || info.id;
-        break;
-      case "\u8CA9\u58F2\u8005":
-        info.maker = stripTags3(inner);
-        break;
-      case "\u5973\u512A":
-        info.actors = textPieces(inner);
-        break;
-      case "\u8CA9\u58F2\u65E5":
-        info.release_date = parseDateLoose(stripTags3(inner));
-        break;
-      case "\u53CE\u9332\u6642\u9593":
-        info.runtime = parseRuntime(stripTags3(inner));
-        break;
-      case "\u30BF\u30B0":
-        info.genres = textPieces(inner);
-        break;
+  const scoreClass = fields.scoreClass || "";
+  const scoreDigits = /(\d+)$/.exec(scoreClass.trim());
+  if (scoreDigits) info.score = parseScore(scoreDigits[1]);
+  info.thumb_url = fields.thumb ? absURL(pageURL, fields.thumb) : "";
+  info.runtime = parseRuntime(fields.runtimeText || "");
+  info.preview_images = fields.previews.map(
+    (u) => absURL(pageURL, u)
+  );
+  for (const m of html.matchAll(
+    /<div class="items_article_softDevice"><p>([\s\S]*?)<\/p><\/div>/g
+  )) {
+    const text = stripTags3(m[1]);
+    const cut = text.indexOf(":");
+    if (cut < 0) continue;
+    const key = text.slice(0, cut).trim();
+    const value = text.slice(cut + 1).trim();
+    if (key === "Sale Day" || key === "\u8CA9\u58F2\u65E5") {
+      const d = parseDateLoose(value);
+      if (d) info.release_date = d;
+    } else if (key === "Product ID" || key === "\u5546\u54C1ID") {
+      const productID = fc2ParseNumber(value);
+      if (productID && productID !== id) {
+        throw new ProviderError(
+          `ID mismatch: FC2-${id} != FC2-${productID}`,
+          "invalid"
+        );
+      }
     }
   }
+  info.cover_url = info.thumb_url || info.preview_images[0] || "";
   return info;
 }
-__name(parseFc2ppvdbPage, "parseFc2ppvdbPage");
-var fc2ppvdbProvider = {
-  name: "FC2PPVDB",
-  priority: 998,
+__name(parseFc2Page, "parseFc2Page");
+function fc2SummaryIframeURL(html, pageURL) {
+  const m = /<section class="items_article_Contents">[\s\S]*?<iframe[^>]+src="([^"]+)"/.exec(
+    html
+  );
+  return m ? absURL(pageURL, m[1]) : "";
+}
+__name(fc2SummaryIframeURL, "fc2SummaryIframeURL");
+var fc2Provider = {
+  name: "FC2",
+  priority: 1e3,
   normalizeMovieID(id) {
-    return fc2ParseNumber(id).replace(/^FC2-/, "");
+    return fc2ParseNumber(id);
   },
   parseMovieIDFromURL(rawURL) {
     try {
       const parts = new URL(rawURL).pathname.split("/").filter(Boolean);
-      return parts[parts.length - 1] ?? null;
+      const base = parts[parts.length - 1] ?? "";
+      return fc2ParseNumber(decodeURIComponent(base)) || null;
     } catch {
       return null;
     }
   },
   async getMovieInfoByID(id) {
-    const normalized = fc2ppvdbProvider.normalizeMovieID(id);
+    const normalized = fc2Provider.normalizeMovieID(id);
     if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
-    return fc2ppvdbProvider.getMovieInfoByURL(MOVIE_URL18.replace("%s", normalized));
+    return fc2Provider.getMovieInfoByURL(MOVIE_URL17.replace("%s", normalized));
   },
   async getMovieInfoByURL(rawURL) {
-    const id = fc2ppvdbProvider.parseMovieIDFromURL(rawURL);
-    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const id = fc2Provider.parseMovieIDFromURL(rawURL);
+    if (!id) {
+      throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    }
     const r = await fetchPage(rawURL, {
-      providerName: "FC2PPVDB",
+      providerName: "FC2",
       notFoundMessage: `movie not found: ${id}`
     });
-    const info = await parseFc2ppvdbPage(r.text, rawURL, id);
+    const info = await parseFc2Page(r.text, rawURL, id);
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    const iframeURL = fc2SummaryIframeURL(r.text, rawURL);
+    if (iframeURL) {
+      try {
+        const sub = await fetchText(iframeURL, {
+          providerName: "FC2",
+          timeoutMs: 8e3
+        });
+        const div = /<body[^>]*>\s*<div[^>]*>([\s\S]*?)<\/div>/.exec(sub.text);
+        if (div) info.summary = stripTags3(div[1]);
+      } catch {
+      }
+    }
+    return info;
+  }
+};
+
+// src/providers/fc2cmadb.ts
+var MOVIE_URL18 = "https://fc2cmadb.com/articles/%s";
+function parseCmadbArticle(html) {
+  const m = /<script data-page="app" type="application\/json">([\s\S]*?)<\/script>/.exec(
+    html
+  );
+  if (!m) return null;
+  try {
+    const page = JSON.parse(m[1]);
+    return page.props?.article ?? null;
+  } catch {
+    return null;
+  }
+}
+__name(parseCmadbArticle, "parseCmadbArticle");
+function parseCmadbPage(html, pageURL, id) {
+  const article = parseCmadbArticle(html);
+  if (!article || !article.video_id) {
+    throw new ProviderError(`movie not found: ${id}`, "not_found");
+  }
+  if (article.not_found === "True") {
+    throw new ProviderError(`movie not found: ${id}`, "not_found");
+  }
+  const info = baseMovieInfo("FC2CMADB", String(article.video_id), pageURL);
+  info.number = `FC2-${article.video_id}`;
+  info.title = (article.title ?? "").trim();
+  info.release_date = article.release_date ?? "";
+  info.runtime = parseRuntime(article.duration ?? "");
+  info.maker = article.writer?.name ?? "";
+  info.genres = (article.tags ?? []).map((t) => (t.name ?? "").trim()).filter(Boolean);
+  const img = article.image_url ?? "";
+  info.thumb_url = img;
+  info.cover_url = img.includes("/w276/") ? img.replace("/w276/", "/w800/") : img;
+  return info;
+}
+__name(parseCmadbPage, "parseCmadbPage");
+var fc2cmadbProvider = {
+  name: "FC2CMADB",
+  priority: 998,
+  normalizeMovieID(id) {
+    return fc2ParseNumber(id);
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const parts = new URL(rawURL).pathname.split("/").filter(Boolean);
+      const base = parts[parts.length - 1] ?? "";
+      return fc2ParseNumber(decodeURIComponent(base)) || null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const normalized = fc2cmadbProvider.normalizeMovieID(id);
+    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    return fc2cmadbProvider.getMovieInfoByURL(
+      MOVIE_URL18.replace("%s", normalized)
+    );
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = fc2cmadbProvider.parseMovieIDFromURL(rawURL);
+    if (!id) {
+      throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    }
+    const r = await fetchText(rawURL, { providerName: "FC2CMADB" });
+    if (r.status === 404) {
+      throw new ProviderError(`movie not found: ${id}`, "not_found");
+    }
+    if (r.status < 200 || r.status >= 300) {
+      throw new ProviderError(`http ${r.status} for ${rawURL}`, "upstream");
+    }
+    const info = parseCmadbPage(r.text, rawURL, id);
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
     }
@@ -6692,7 +6716,6 @@ for (const p of [
   ...falenoProviders,
   heyzoProvider,
   heydougaProvider,
-  kin8Provider,
   mywifeProvider,
   pcolleProvider,
   gcolleProvider,
@@ -6705,7 +6728,8 @@ for (const p of [
   aveProvider,
   sodProvider,
   javfreeProvider,
-  fc2ppvdbProvider
+  fc2Provider,
+  fc2cmadbProvider
 ]) {
   providers.set(p.name.toUpperCase(), p);
 }
@@ -6919,7 +6943,6 @@ var HOST_PROVIDERS = [
   ["caribbeancom.com", "CARIBBEANCOM"],
   ["heyzo.com", "HEYZO"],
   ["heydouga.com", "HEYDOUGA"],
-  ["kin8tengoku.com", "KIN8"],
   ["mywife.cc", "MYWIFE"],
   ["pcolle.com", "PCOLLE"],
   ["gcolle.net", "GCOLLE"],
@@ -6937,7 +6960,8 @@ var HOST_PROVIDERS = [
   ["aventertainments.com", "AVE"],
   ["sod.co.jp", "SOD"],
   ["javfree.me", "JAVFREE"],
-  ["fc2ppvdb.com", "FC2PPVDB"]
+  ["fc2.com", "FC2"],
+  ["fc2cmadb.com", "FC2CMADB"]
 ];
 function providerForURL(rawURL) {
   try {
