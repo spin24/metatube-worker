@@ -9,3 +9,17 @@ compatibility_date = "2025-09-01"
 binding = "DB"
 database_name = "metatube"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# Workers Logs (dashboard: Settings -> Observability). Free tier
+# keeps 3 days of logs; invocation logs record every request's
+# method, path, status and duration.
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = false
+head_sampling_rate = 1
+persist = true
