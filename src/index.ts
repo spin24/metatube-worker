@@ -62,6 +62,13 @@ import { gcolleProvider } from "./providers/gcolle";
 import { tokyohotProvider } from "./providers/tokyo-hot";
 import { madouquProvider } from "./providers/madouqu";
 import { fc2hubProvider } from "./providers/fc2hub";
+import { dugaProvider } from "./providers/duga";
+import { mgsProvider } from "./providers/mgs";
+import { getchuProvider } from "./providers/getchu";
+import { aveProvider } from "./providers/ave";
+import { sodProvider } from "./providers/sod";
+import { javfreeProvider } from "./providers/javfree";
+import { fc2ppvdbProvider } from "./providers/fc2ppvdb";
 
 const providers = new Map<string, MovieProvider>();
 for (const p of [
@@ -81,6 +88,13 @@ for (const p of [
   tokyohotProvider,
   madouquProvider,
   fc2hubProvider,
+  dugaProvider,
+  mgsProvider,
+  getchuProvider,
+  aveProvider,
+  sodProvider,
+  javfreeProvider,
+  fc2ppvdbProvider,
 ]) {
   providers.set(p.name.toUpperCase(), p);
 }
@@ -363,6 +377,13 @@ const HOST_PROVIDERS: [string, string][] = [
   ["tokyo-hot.com", "TOKYO-HOT"],
   ["madouqu.com", "MADOUQU"],
   ["javten.com", "FC2HUB"],
+  ["duga.jp", "DUGA"],
+  ["mgstage.com", "MGS"],
+  ["getchu.com", "GETCHU"],
+  ["aventertainments.com", "AVE"],
+  ["sod.co.jp", "SOD"],
+  ["javfree.me", "JAVFREE"],
+  ["fc2ppvdb.com", "FC2PPVDB"],
 ];
 
 function providerForURL(rawURL: string): MovieProvider | null {

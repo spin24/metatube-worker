@@ -137,6 +137,19 @@ export function parseDateLoose(s: string | undefined): string {
   if (jp) return `${jp[1]}-${jp[2].padStart(2, "0")}-${jp[3].padStart(2, "0")}`;
   const iso = /(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(s);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  const en = /([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})|(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/.exec(s);
+  if (en) {
+    const months: Record<string, number> = {
+      january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+      july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+      jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
+    };
+    const mon = months[(en[1] ?? en[5]).toLowerCase()];
+    if (mon) {
+      const day = (en[2] ?? en[4]).padStart(2, "0");
+      return `${en[3] ?? en[6]}-${String(mon).padStart(2, "0")}-${day}`;
+    }
+  }
   return "";
 }
 
@@ -168,6 +181,7 @@ export function extractJsonLd(html: string): Record<string, unknown>[] {
  */
 export function decodeEntities(s: string): string {
   return s
+    .replace(/\u0000/g, "")
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
     .replace(/&nbsp;/g, "\u00A0")
@@ -314,6 +328,11 @@ export async function collectPairs(
   };
   const linkSelector = `${valueSelector} a`;
   const rw = new HTMLRewriter()
+    .on("tr", {
+      element() {
+        flush();
+      },
+    })
     .on(labelSelector, {
       element() {
         flush();

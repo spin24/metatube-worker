@@ -3446,6 +3446,40 @@ function parseDateLoose(s) {
   if (jp) return `${jp[1]}-${jp[2].padStart(2, "0")}-${jp[3].padStart(2, "0")}`;
   const iso = /(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(s);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  const en = /([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})|(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/.exec(s);
+  if (en) {
+    const months = {
+      january: 1,
+      february: 2,
+      march: 3,
+      april: 4,
+      may: 5,
+      june: 6,
+      july: 7,
+      august: 8,
+      september: 9,
+      october: 10,
+      november: 11,
+      december: 12,
+      jan: 1,
+      feb: 2,
+      mar: 3,
+      apr: 4,
+      jun: 6,
+      jul: 7,
+      aug: 8,
+      sep: 9,
+      sept: 9,
+      oct: 10,
+      nov: 11,
+      dec: 12
+    };
+    const mon = months[(en[1] ?? en[5]).toLowerCase()];
+    if (mon) {
+      const day = (en[2] ?? en[4]).padStart(2, "0");
+      return `${en[3] ?? en[6]}-${String(mon).padStart(2, "0")}-${day}`;
+    }
+  }
   return "";
 }
 __name(parseDateLoose, "parseDateLoose");
@@ -3469,7 +3503,7 @@ function extractJsonLd(html) {
 }
 __name(extractJsonLd, "extractJsonLd");
 function decodeEntities(s) {
-  return s.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10))).replace(/&nbsp;/g, "\xA0").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  return s.replace(/\u0000/g, "").replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10))).replace(/&nbsp;/g, "\xA0").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 __name(decodeEntities, "decodeEntities");
 async function collectFields(html, specs) {
@@ -3553,7 +3587,11 @@ async function collectPairs(html, labelSelector, valueSelector) {
     }
   }, "flush");
   const linkSelector = `${valueSelector} a`;
-  const rw = new HTMLRewriter().on(labelSelector, {
+  const rw = new HTMLRewriter().on("tr", {
+    element() {
+      flush();
+    }
+  }).on(labelSelector, {
     element() {
       flush();
       cur = { label: "", value: "", valueTexts: [], valueFirstLink: "", linkBuf: "", linkDone: false };
@@ -5332,6 +5370,1033 @@ var fc2hubProvider = {
   }
 };
 
+// src/providers/duga.ts
+var MOVIE_URL12 = "https://duga.jp/ppv/%s/";
+var SEARCH_URL6 = "https://duga.jp/search/=/q=%s/";
+async function parseDugaPage(html, pageURL, id) {
+  const info = baseMovieInfo("DUGA", id, pageURL);
+  const fields = await collectFields(html, [
+    { key: "title", selector: "#contentsname", mode: "text" },
+    { key: "thumb", selector: "div.imagebox img#productjpg", mode: "attr", attr: "src" },
+    { key: "coverLink", selector: "div.imagebox > a", mode: "attr", attr: "href" },
+    { key: "ogTitle", selector: 'meta[property="og:title"]', mode: "attr", attr: "content" },
+    { key: "ogDesc", selector: 'meta[property="og:description"]', mode: "attr", attr: "content" },
+    { key: "ogImage", selector: 'meta[property="og:image"]', mode: "attr", attr: "content" },
+    { key: "video", selector: "video.play-video", mode: "attr", attr: "src" },
+    { key: "previews", selector: "#digestthumbbox > li a", mode: "attrs", attr: "href" },
+    { key: "actors", selector: "ul.performer li a", mode: "texts" },
+    { key: "genres", selector: "ul.categorylist li a", mode: "texts" },
+    { key: "directors", selector: "ul.director li a", mode: "texts" },
+    { key: "scoreAlt", selector: "div.ratingstar-total img", mode: "attr", attr: "alt" }
+  ]);
+  info.title = fields.title.trim();
+  info.thumb_url = fields.thumb ? absURL(pageURL, fields.thumb) : "";
+  info.cover_url = fields.coverLink ? absURL(pageURL, fields.coverLink) : "";
+  info.preview_video_url = fields.video ? absURL(pageURL, fields.video) : "";
+  info.preview_images = fields.previews.map((u) => absURL(pageURL, u));
+  info.actors = fields.actors;
+  info.genres = fields.genres;
+  const directors = fields.directors;
+  if (directors.length > 0) info.director = directors[0];
+  if (fields.scoreAlt) info.score = parseScore(fields.scoreAlt);
+  for (const block of extractJsonLd(html)) {
+    const desc = block["description"];
+    if (typeof desc === "string" && desc) {
+      info.summary = desc;
+      break;
+    }
+  }
+  if (!info.title) info.title = fields.ogTitle.trim();
+  if (!info.summary) info.summary = fields.ogDesc.trim();
+  if (!info.thumb_url && fields.ogImage) {
+    info.thumb_url = absURL(pageURL, fields.ogImage);
+  }
+  const rows = await collectPairs(html, "div.summaryinner th", "div.summaryinner td");
+  for (const row of rows) {
+    switch (row.label) {
+      case "\u914D\u4FE1\u958B\u59CB\u65E5":
+      case "\u767A\u58F2\u65E5":
+        if (!info.release_date) info.release_date = parseDateLoose(row.value);
+        break;
+      case "\u30E1\u30FC\u30AB\u30FC":
+        info.maker = row.value;
+        break;
+      case "\u30EC\u30FC\u30D9\u30EB":
+        info.label = row.value;
+        break;
+      case "\u4F5C\u54C1ID":
+        info.id = row.value;
+        break;
+      case "\u30E1\u30FC\u30AB\u30FC\u54C1\u756A":
+        info.number = row.value;
+        break;
+      case "\u30B7\u30EA\u30FC\u30BA":
+        info.series = row.value;
+        break;
+    }
+  }
+  const dlRows = await collectPairs(html, "div.downloadbox th", "div.downloadbox td");
+  for (const row of dlRows) {
+    if (row.label === "\u518D\u751F\u6642\u9593" && info.runtime === 0) {
+      info.runtime = parseRuntime(row.value);
+    }
+  }
+  if (!info.cover_url) info.cover_url = info.thumb_url;
+  if (!info.id) info.id = id;
+  if (!info.number) info.number = info.id.toUpperCase();
+  return info;
+}
+__name(parseDugaPage, "parseDugaPage");
+async function parseDugaSearchIDs(html, pageURL) {
+  const ids = [];
+  let inCard = false;
+  let got = false;
+  const rw = new HTMLRewriter().on("div.contentslist", {
+    element() {
+      inCard = true;
+      got = false;
+    }
+  }).on("#searchresultarea div.contentslist a", {
+    element(el) {
+      if (inCard && !got) {
+        const href = el.getAttribute("href");
+        if (href) {
+          const parsed = dugaProvider.parseMovieIDFromURL(absURL(pageURL, href));
+          if (parsed) ids.push(parsed);
+          got = true;
+        }
+      }
+    }
+  });
+  await rw.transform(new Response(html)).text();
+  return ids;
+}
+__name(parseDugaSearchIDs, "parseDugaSearchIDs");
+var dugaProvider = {
+  name: "DUGA",
+  priority: 998,
+  normalizeMovieID(id) {
+    return id.trim().toLowerCase();
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const parts = new URL(rawURL).pathname.split("/").filter(Boolean);
+      const base = parts[parts.length - 1] ?? "";
+      return base ? dugaProvider.normalizeMovieID(decodeURIComponent(base)) : null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const normalized = dugaProvider.normalizeMovieID(id);
+    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    return dugaProvider.getMovieInfoByURL(MOVIE_URL12.replace("%s", normalized));
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = dugaProvider.parseMovieIDFromURL(rawURL);
+    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const r = await fetchPage(rawURL, {
+      providerName: "DUGA",
+      notFoundMessage: `movie not found: ${id}`
+    });
+    const info = await parseDugaPage(r.text, rawURL, id);
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    return info;
+  },
+  normalizeMovieKeyword(keyword) {
+    if (isSpecial(keyword)) return "";
+    return keyword.trim().toUpperCase();
+  },
+  async searchMovie(keyword) {
+    const url = SEARCH_URL6.replace("%s", encodeURIComponent(keyword));
+    const r = await fetchPage(url, { providerName: "DUGA" });
+    const ids = await parseDugaSearchIDs(r.text, url);
+    const settled = await Promise.allSettled(
+      ids.slice(0, 3).map((id) => dugaProvider.getMovieInfoByID(id))
+    );
+    const results = [];
+    for (const s of settled) {
+      if (s.status === "fulfilled" && isValidMovieInfo(s.value)) {
+        results.push(movieInfoToSearchResult(s.value));
+      }
+    }
+    return results;
+  }
+};
+
+// src/providers/mgs.ts
+var MOVIE_URL13 = "https://www.mgstage.com/product/product_detail/%s/";
+var SEARCH_URL7 = "https://www.mgstage.com/search/cSearch.php?search_word=%s";
+var SAMPLE_URL2 = "https://www.mgstage.com/sampleplayer/sampleRespons.php?pid=%s";
+var COOKIE4 = "adc=1";
+function mgsImageSrc(s, thumb) {
+  const re = /\/p[f|b]_[a-z]\d*?_/i;
+  if (re.test(s)) return s.replace(re, thumb ? "/pf_e_" : "/pb_e_");
+  return s;
+}
+__name(mgsImageSrc, "mgsImageSrc");
+async function parseMgsPage(html, pageURL, id) {
+  const info = baseMovieInfo("MGS", id, pageURL);
+  const fields = await collectFields(html, [
+    { key: "title", selector: "#center_column h1", mode: "text" },
+    { key: "summary", selector: 'meta[property="og:description"]', mode: "attr", attr: "content" },
+    { key: "thumb", selector: "div.detail_data > div h2 img", mode: "attr", attr: "src" },
+    { key: "cover", selector: "#EnlargeImage", mode: "attr", attr: "href" },
+    { key: "previews", selector: "#sample-photo dd ul li a", mode: "attrs", attr: "href" }
+  ]);
+  info.title = fields.title.trim();
+  info.summary = fields.summary.trim();
+  info.thumb_url = fields.thumb ? absURL(pageURL, fields.thumb) : "";
+  info.cover_url = fields.cover ? absURL(pageURL, fields.cover) : "";
+  info.preview_images = fields.previews.map((u) => absURL(pageURL, u));
+  const rows = await collectPairs(html, "tr th", "tr td");
+  for (const row of rows) {
+    switch (row.label) {
+      case "\u51FA\u6F14\uFF1A":
+        info.actors = row.valueTexts;
+        break;
+      case "\u30E1\u30FC\u30AB\u30FC\uFF1A":
+        info.maker = row.value;
+        break;
+      case "\u53CE\u9332\u6642\u9593\uFF1A":
+        info.runtime = parseRuntime(row.value);
+        break;
+      case "\u54C1\u756A\uFF1A":
+        info.number = row.value;
+        break;
+      case "\u914D\u4FE1\u958B\u59CB\u65E5\uFF1A":
+      case "\u5546\u54C1\u767A\u58F2\u65E5\uFF1A":
+        if (!info.release_date) info.release_date = parseDateLoose(row.value);
+        break;
+      case "\u30B7\u30EA\u30FC\u30BA\uFF1A":
+        info.series = row.value;
+        break;
+      case "\u30EC\u30FC\u30D9\u30EB\uFF1A":
+        info.label = row.value;
+        break;
+      case "\u30B8\u30E3\u30F3\u30EB\uFF1A":
+        info.genres = row.valueTexts;
+        break;
+      case "\u8A55\u4FA1\uFF1A":
+        info.score = parseScore(row.value);
+        break;
+    }
+  }
+  if (!info.number) info.number = id;
+  const btn = /sample_movie_btn[\s\S]{0,400}?href="([^"]+)"/.exec(html);
+  if (btn) {
+    try {
+      const pid = btn[1].split("/").filter(Boolean).pop() ?? "";
+      if (pid) {
+        const r = await fetchText(SAMPLE_URL2.replace("%s", pid), {
+          cookie: COOKIE4,
+          providerName: "MGS"
+        });
+        if (r.status >= 200 && r.status < 300) {
+          const data = JSON.parse(r.text);
+          if (data.url) {
+            info.preview_video_url = data.url.replace(/\.ism\/request?.+$/, ".mp4");
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  return info;
+}
+__name(parseMgsPage, "parseMgsPage");
+async function parseMgsSearch(html, pageURL) {
+  const cards = [];
+  let cur = null;
+  let titleAnchor = false;
+  const rw = new HTMLRewriter().on("#center_column ul.product_list > li", {
+    element() {
+      cur = { homepage: "", img: "", title: "", fallbackTitle: "", review: "" };
+      cards.push(cur);
+      titleAnchor = false;
+    }
+  }).on("#center_column ul.product_list > li h5 a", {
+    element(el) {
+      if (cur && !cur.homepage) cur.homepage = el.getAttribute("href") ?? "";
+    }
+  }).on("#center_column ul.product_list > li h5 a img", {
+    element(el) {
+      if (cur && !cur.img) cur.img = el.getAttribute("src") ?? "";
+    }
+  }).on("#center_column ul.product_list > li a", {
+    element(el) {
+      titleAnchor = (el.getAttribute("class") ?? "").includes("title");
+    },
+    text(t) {
+      if (cur && titleAnchor) cur.title += t.text;
+    }
+  }).on("#center_column ul.product_list > li a p", {
+    text(t) {
+      if (cur) cur.fallbackTitle += t.text;
+    }
+  }).on("#center_column ul.product_list > li p.review", {
+    text(t) {
+      if (cur) cur.review += t.text;
+    }
+  });
+  await rw.transform(new Response(html)).text();
+  const results = [];
+  for (const c of cards) {
+    if (!c.homepage) continue;
+    const homepage = absURL(pageURL, c.homepage);
+    const id = mgsProvider.parseMovieIDFromURL(homepage);
+    if (!id) continue;
+    const img = c.img ? absURL(pageURL, c.img) : "";
+    results.push({
+      id,
+      number: id,
+      title: c.title.trim() || c.fallbackTitle.trim(),
+      provider: "MGS",
+      homepage,
+      thumb_url: img ? mgsImageSrc(img, true) : "",
+      cover_url: img ? mgsImageSrc(img, false) : "",
+      score: parseScore(c.review),
+      actors: [],
+      release_date: ""
+    });
+  }
+  return results;
+}
+__name(parseMgsSearch, "parseMgsSearch");
+var mgsProvider = {
+  name: "MGS",
+  priority: 1e3,
+  normalizeMovieID(id) {
+    return id.trim().toUpperCase();
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const parts = new URL(rawURL).pathname.split("/").filter(Boolean);
+      const base = parts[parts.length - 1] ?? "";
+      return base ? mgsProvider.normalizeMovieID(decodeURIComponent(base)) : null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const normalized = mgsProvider.normalizeMovieID(id);
+    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    return mgsProvider.getMovieInfoByURL(MOVIE_URL13.replace("%s", normalized));
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = mgsProvider.parseMovieIDFromURL(rawURL);
+    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const r = await fetchPage(rawURL, {
+      cookie: COOKIE4,
+      providerName: "MGS",
+      notFoundMessage: `movie not found: ${id}`
+    });
+    const info = await parseMgsPage(r.text, rawURL, id);
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    return info;
+  },
+  normalizeMovieKeyword(keyword) {
+    if (isSpecial(keyword)) return "";
+    return keyword.trim().toUpperCase();
+  },
+  async searchMovie(keyword) {
+    const url = SEARCH_URL7.replace("%s", encodeURIComponent(keyword));
+    const r = await fetchPage(url, { cookie: COOKIE4, providerName: "MGS" });
+    return parseMgsSearch(r.text, url);
+  }
+};
+
+// src/providers/getchu.ts
+var MOVIE_URL14 = "https://dl.getchu.com/i/item%s";
+function stripTags(s) {
+  return decodeEntities(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+__name(stripTags, "stripTags");
+async function parseGetchuPage(html, pageURL, id) {
+  const info = baseMovieInfo("Getchu", id, pageURL);
+  info.number = `GETCHU-${id}`;
+  try {
+    const fields = await collectFields(html, [
+      {
+        key: "titleDiv",
+        selector: 'td div[style="color: #333333; padding: 3px 0px 0px 5px;"]',
+        mode: "text"
+      },
+      { key: "cover", selector: 'td[bgcolor="#ffffff"] img', mode: "attr", attr: "src" },
+      { key: "ogTitle", selector: 'meta[property="og:title"]', mode: "attr", attr: "content" },
+      { key: "ogImage", selector: 'meta[property="og:image"]', mode: "attr", attr: "content" }
+    ]);
+    info.title = fields.titleDiv.trim();
+    if (!info.title) info.title = fields.ogTitle.trim();
+    if (fields.cover) info.cover_url = absURL(pageURL, fields.cover);
+    if (!info.cover_url && fields.ogImage) {
+      info.cover_url = absURL(pageURL, fields.ogImage);
+    }
+  } catch {
+  }
+  try {
+    const fields = await collectFields(html, [
+      {
+        key: "previews",
+        selector: 'td[style*="background-color: #444444;"] a',
+        mode: "attrs",
+        attr: "href"
+      }
+    ]);
+    info.preview_images = fields.previews.map((u) => absURL(pageURL, u));
+  } catch {
+  }
+  const rowRe = /<td[^>]*>\s*(サークル|配信開始日|趣向|作品内容)\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/g;
+  let m;
+  while ((m = rowRe.exec(html)) !== null) {
+    const label = m[1];
+    const rawValue = m[2];
+    switch (label) {
+      case "\u30B5\u30FC\u30AF\u30EB":
+        info.label = stripTags(rawValue);
+        break;
+      case "\u914D\u4FE1\u958B\u59CB\u65E5":
+        info.release_date = parseDateLoose(stripTags(rawValue));
+        break;
+      case "\u8DA3\u5411":
+        info.genres = stripTags(rawValue).split(/[\s、,]+/).map((g) => g.trim()).filter(Boolean);
+        break;
+      case "\u4F5C\u54C1\u5185\u5BB9":
+        info.summary = stripTags(rawValue);
+        break;
+    }
+  }
+  if (!info.thumb_url) info.thumb_url = info.cover_url;
+  return info;
+}
+__name(parseGetchuPage, "parseGetchuPage");
+var getchuProvider = {
+  name: "Getchu",
+  priority: 1e3,
+  normalizeMovieID(id) {
+    const m = /^(?:GETCHU[-_])?(\d+)$/i.exec(id.trim());
+    return m ? m[1] : "";
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const parts = new URL(rawURL).pathname.split("/").filter(Boolean);
+      const base = parts[parts.length - 1] ?? "";
+      return base.replace(/^[item]+/, "") || null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const normalized = getchuProvider.normalizeMovieID(id);
+    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    return getchuProvider.getMovieInfoByURL(MOVIE_URL14.replace("%s", normalized));
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = getchuProvider.parseMovieIDFromURL(rawURL);
+    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const r = await fetchPage(rawURL, {
+      providerName: "Getchu",
+      notFoundMessage: `movie not found: ${id}`
+    });
+    const info = await parseGetchuPage(r.text, rawURL, id);
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    return info;
+  }
+};
+
+// src/providers/ave.ts
+var MOVIE_URL15 = "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
+var SEARCH_URL8 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
+function aveParseNumber(s) {
+  const m = /\/(?:dvd\d)?([a-z\d-_]+)\.(?:jpe?g|png|gif|webp)/i.exec(s);
+  return m ? m[1].toUpperCase() : "";
+}
+__name(aveParseNumber, "aveParseNumber");
+async function parseAvePage(html, pageURL, id) {
+  const info = baseMovieInfo("AVE", id, pageURL);
+  const fields = await collectFields(html, [
+    { key: "title", selector: "#MyBody .section-title h3", mode: "text" },
+    { key: "summary1", selector: "div.product-description", mode: "text" },
+    { key: "summary2", selector: "div#category", mode: "text" },
+    { key: "playerCover", selector: "#PlayerCover > img", mode: "attr", attr: "src" },
+    { key: "imageSrc", selector: 'link[rel="image_src"]', mode: "attr", attr: "href" },
+    { key: "galleryCover", selector: "span.grid-gallery > a", mode: "attr", attr: "href" },
+    { key: "hls", selector: "#player1 > source", mode: "attr", attr: "src" }
+  ]);
+  info.title = fields.title.trim();
+  info.summary = fields.summary1.trim() + fields.summary2.trim();
+  if (fields.playerCover) {
+    info.cover_url = absURL(pageURL, fields.playerCover);
+    info.thumb_url = info.cover_url.replaceAll("bigcover", "jacket_images");
+  }
+  if (!info.thumb_url && fields.imageSrc) {
+    info.thumb_url = absURL(pageURL, fields.imageSrc);
+  }
+  if (!info.cover_url && fields.galleryCover) {
+    info.cover_url = absURL(pageURL, fields.galleryCover);
+  }
+  if (fields.hls) info.preview_video_hls_url = absURL(pageURL, fields.hls);
+  {
+    const previews = [];
+    const rw = new HTMLRewriter().on("#sscontainerppv123 > img", {
+      element(el) {
+        const src = el.getAttribute("src");
+        if (src) previews.splice(0, previews.length, absURL(pageURL, src));
+      }
+    }).on("div.gallery-block a.lightbox", {
+      element(el) {
+        const href = el.getAttribute("href");
+        if (href) previews.push(absURL(pageURL, href));
+      }
+    });
+    await rw.transform(new Response(html)).text();
+    info.preview_images = previews;
+  }
+  const rows = await collectPairsSeq(html, "div.single-info > span");
+  for (const row of rows) {
+    switch (row.label) {
+      case "\u5546\u54C1\u756A\u53F7":
+        info.number = row.value;
+        break;
+      case "\u4E3B\u6F14\u5973\u512A":
+        info.actors = row.valueTexts;
+        break;
+      case "\u30B9\u30BF\u30B8\u30AA":
+        info.maker = row.value;
+        break;
+      case "\u30B7\u30EA\u30FC\u30BA":
+        info.series = row.value;
+        break;
+      case "\u30AB\u30C6\u30B4\u30EA":
+        info.genres = row.valueTexts;
+        break;
+      case "\u767A\u58F2\u65E5": {
+        const first = row.value.split(/\s+/)[0] ?? "";
+        info.release_date = parseDateLoose(first);
+        break;
+      }
+      case "\u53CE\u9332\u6642\u9593":
+        info.runtime = parseRuntime(row.value);
+        break;
+    }
+  }
+  if (!info.number) info.number = id;
+  return info;
+}
+__name(parseAvePage, "parseAvePage");
+async function parseAveSearch(html, pageURL) {
+  const cards = [];
+  let cur = null;
+  const rw = new HTMLRewriter().on("div.single-slider-product", {
+    element() {
+      cur = { homepage: "", img: "", title: "" };
+      cards.push(cur);
+    }
+  }).on("div.single-slider-product a", {
+    element(el) {
+      if (cur && !cur.homepage) cur.homepage = el.getAttribute("href") ?? "";
+    }
+  }).on("div.single-slider-product a img", {
+    element(el) {
+      if (cur && !cur.img) cur.img = el.getAttribute("src") ?? "";
+    }
+  }).on("div.single-slider-product p.product-title a", {
+    text(t) {
+      if (cur) cur.title += t.text;
+    }
+  });
+  await rw.transform(new Response(html)).text();
+  const results = [];
+  for (const c of cards) {
+    if (!c.homepage) continue;
+    const homepage = absURL(pageURL, c.homepage);
+    const id = aveProvider.parseMovieIDFromURL(homepage);
+    if (!id) continue;
+    const thumb = c.img ? absURL(pageURL, c.img) : "";
+    results.push({
+      id,
+      number: aveParseNumber(thumb),
+      title: c.title.trim(),
+      provider: "AVE",
+      homepage,
+      actors: [],
+      thumb_url: thumb,
+      cover_url: thumb.replaceAll("jacket_images", "bigcover"),
+      score: 0,
+      release_date: ""
+    });
+  }
+  return results;
+}
+__name(parseAveSearch, "parseAveSearch");
+var aveProvider = {
+  name: "AVE",
+  priority: 998,
+  normalizeMovieID(id) {
+    return id.trim();
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const u = new URL(rawURL);
+      const productID = u.searchParams.get("product_id");
+      if (productID) return productID;
+      const old = /^\/(\d+)\/\d+\/\d+\/product_lists/.exec(u.pathname);
+      if (old) return old[1];
+      const pro = u.searchParams.get("pro");
+      if (pro) return pro;
+      return null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const normalized = aveProvider.normalizeMovieID(id);
+    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    return aveProvider.getMovieInfoByURL(
+      MOVIE_URL15.replace("%s", encodeURIComponent(normalized))
+    );
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = aveProvider.parseMovieIDFromURL(rawURL);
+    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const r = await fetchPage(rawURL, {
+      providerName: "AVE",
+      notFoundMessage: `movie not found: ${id}`
+    });
+    const info = await parseAvePage(r.text, rawURL, id);
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    return info;
+  },
+  normalizeMovieKeyword(keyword) {
+    if (isSpecial(keyword)) return "";
+    return keyword.trim().toUpperCase();
+  },
+  async searchMovie(keyword) {
+    const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));
+    const r = await fetchPage(url, { providerName: "AVE" });
+    return parseAveSearch(r.text, url);
+  }
+};
+
+// src/providers/sod.ts
+var MOVIE_URL16 = "https://ec.sod.co.jp/prime/videos/?id=%s";
+var SEARCH_URL9 = "https://ec.sod.co.jp/prime/videos/genre/?search_type=1&sodsearch=%s";
+var NOW_IMAGE = /\/thumbnail\/now_\w+\.jpg/;
+function isValidImageURL(s) {
+  return !NOW_IMAGE.test(s);
+}
+__name(isValidImageURL, "isValidImageURL");
+async function fetchSodPage(url) {
+  const r = await fetchPage(url, { providerName: "SOD" });
+  if (!r.text.includes("pkg_age")) return { text: r.text, url };
+  const m = /pkg_age[\s\S]{0,800}?<a[^>]+href="([^"]+)"/.exec(r.text);
+  if (!m) return { text: r.text, url };
+  try {
+    const gate = await fetchText(absURL(url, m[1]), {
+      referer: url,
+      providerName: "SOD"
+    });
+    if (gate.status >= 200 && gate.status < 400 && gate.text) {
+      return { text: gate.text, url };
+    }
+  } catch {
+  }
+  return { text: r.text, url };
+}
+__name(fetchSodPage, "fetchSodPage");
+async function parseSodPage(html, pageURL, id) {
+  const info = baseMovieInfo("SOD", id, pageURL);
+  info.number = id;
+  const fields = await collectFields(html, [
+    { key: "title", selector: "p.product_title", mode: "text" },
+    { key: "summary", selector: "div.videos_textli article", mode: "text" },
+    { key: "cover", selector: "#videos_toptable div.videos_samimg a", mode: "attr", attr: "href" },
+    { key: "thumb", selector: "#videos_toptable div.videos_samimg a img", mode: "attr", attr: "src" },
+    { key: "previews", selector: "#videos_samsbox > a", mode: "attrs", attr: "href" },
+    { key: "scoreText", selector: "#review_body div.imagestar i", mode: "text" }
+  ]);
+  info.title = fields.title.trim();
+  info.summary = fields.summary.trim();
+  if (fields.cover) info.cover_url = absURL(pageURL, fields.cover);
+  if (fields.thumb) info.thumb_url = absURL(pageURL, fields.thumb);
+  info.preview_images = fields.previews.map((u) => absURL(pageURL, u));
+  if (fields.scoreText) info.score = parseScore(fields.scoreText);
+  const rows = await collectPairsSeq(html, "#v_introduction td");
+  for (const row of rows) {
+    switch (row.label) {
+      case "\u54C1\u756A":
+        info.number = row.value;
+        break;
+      case "\u767A\u58F2\u5E74\u6708\u65E5":
+        info.release_date = parseDateLoose(row.value);
+        break;
+      case "\u30B7\u30EA\u30FC\u30BA\u540D":
+        info.series = row.value;
+        break;
+      case "\u51FA\u6F14\u8005":
+        info.actors = row.valueTexts;
+        break;
+      case "\u518D\u751F\u6642\u9593":
+        info.runtime = parseRuntime(row.value);
+        break;
+      case "\u76E3\u7763":
+        info.director = row.value;
+        break;
+      case "\u30E1\u30FC\u30AB\u30FC":
+        info.maker = row.value;
+        break;
+      case "\u30EC\u30FC\u30D9\u30EB":
+        info.label = row.value;
+        break;
+      case "\u30B8\u30E3\u30F3\u30EB":
+        info.genres = row.valueTexts;
+        break;
+    }
+  }
+  const samp = /videos_sampb[\s\S]{0,400}?<a[^>]+href="([^"]+)"/.exec(html);
+  if (samp) {
+    try {
+      const sub = await fetchText(absURL(pageURL, samp[1]), {
+        referer: pageURL,
+        providerName: "SOD"
+      });
+      const src = /id="moviebox"[\s\S]{0,600}?<source[^>]+src="([^"]+)"/.exec(sub.text);
+      if (src) info.preview_video_url = absURL(pageURL, src[1]);
+    } catch {
+    }
+  }
+  return info;
+}
+__name(parseSodPage, "parseSodPage");
+async function parseSodSearch(html, pageURL) {
+  const cards = [];
+  let cur = null;
+  const rw = new HTMLRewriter().on("#videos_s_mainbox", {
+    element() {
+      cur = { homepage: "", thumb: "", title: "", release: "" };
+      cards.push(cur);
+    }
+  }).on("#videos_s_mainbox div.videis_s_img a", {
+    element(el) {
+      if (cur && !cur.homepage) cur.homepage = el.getAttribute("href") ?? "";
+    }
+  }).on("#videos_s_mainbox div.videis_s_img a img", {
+    element(el) {
+      if (cur && !cur.thumb) cur.thumb = el.getAttribute("src") ?? "";
+    }
+  }).on("#videos_s_mainbox div.videis_s_txt h2 a", {
+    text(t) {
+      if (cur) cur.title += t.text;
+    }
+  }).on("#videos_s_mainbox div.videis_s_star p", {
+    text(t) {
+      if (cur) cur.release += t.text;
+    }
+  });
+  await rw.transform(new Response(html)).text();
+  const results = [];
+  for (const c of cards) {
+    const thumb = c.thumb ? absURL(pageURL, c.thumb) : "";
+    if (!thumb || !isValidImageURL(thumb) || !c.homepage) continue;
+    const homepage = absURL(pageURL, c.homepage);
+    const id = sodProvider.parseMovieIDFromURL(homepage);
+    if (!id) continue;
+    results.push({
+      id,
+      number: id,
+      title: c.title.trim(),
+      provider: "SOD",
+      homepage,
+      actors: [],
+      thumb_url: thumb,
+      cover_url: thumb.replaceAll("_m.jpg", "_l.jpg"),
+      score: 0,
+      release_date: parseDateLoose(c.release)
+    });
+  }
+  return results;
+}
+__name(parseSodSearch, "parseSodSearch");
+var sodProvider = {
+  name: "SOD",
+  priority: 999,
+  normalizeMovieID(id) {
+    return id.trim().toUpperCase();
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const v = new URL(rawURL).searchParams.get("id");
+      return v ? sodProvider.normalizeMovieID(v) : null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const normalized = sodProvider.normalizeMovieID(id);
+    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    return sodProvider.getMovieInfoByURL(
+      MOVIE_URL16.replace("%s", encodeURIComponent(normalized))
+    );
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = sodProvider.parseMovieIDFromURL(rawURL);
+    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const pageURL = MOVIE_URL16.replace("%s", encodeURIComponent(id));
+    const page = await fetchSodPage(pageURL);
+    const info = await parseSodPage(page.text, pageURL, id);
+    info.homepage = rawURL;
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    if (!isValidImageURL(info.cover_url)) {
+      throw new ProviderError("image not available", "upstream");
+    }
+    return info;
+  },
+  normalizeMovieKeyword(keyword) {
+    if (isSpecial(keyword)) return "";
+    return keyword.trim().toUpperCase();
+  },
+  async searchMovie(keyword) {
+    const url = SEARCH_URL9.replace("%s", encodeURIComponent(keyword));
+    const page = await fetchSodPage(url);
+    return parseSodSearch(page.text, url);
+  }
+};
+
+// src/providers/javfree.ts
+var MOVIE_URL17 = "https://javfree.me/%s/%s";
+var SEARCH_URL10 = "https://javfree.me/?s=%s";
+function stripTags2(s) {
+  return decodeEntities(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+__name(stripTags2, "stripTags");
+async function parseJavfreePage(html, pageURL, id) {
+  const info = baseMovieInfo("JAVFREE", id, pageURL);
+  const fields = await collectFields(html, [
+    { key: "title", selector: "header.entry-header h1", mode: "text" },
+    { key: "previews", selector: "div.entry-content > p img", mode: "attrs", attr: "src" }
+  ]);
+  info.title = fields.title.replace(/FC2(?:[-_]?PPV)?[-_]?\d+/gi, "").trim();
+  const tail = pageURL.split("/").filter(Boolean).pop() ?? "";
+  const num = fc2ParseNumber(tail);
+  if (num) info.number = `FC2-${num.replace(/^FC2-/, "")}`;
+  const authorBlock = /<span class="post-author">([\s\S]*?)<\/span>/.exec(html);
+  if (authorBlock) {
+    const inner = authorBlock[1];
+    const strong = /<strong[^>]*>([\s\S]*?)<\/strong>/.exec(inner);
+    if (strong) {
+      info.director = stripTags2(strong[1]);
+      const rest = stripTags2(inner.replace(strong[0], " "));
+      const date = parseDateLoose(rest.replace(info.director, ""));
+      if (date) info.release_date = date;
+    }
+  }
+  info.preview_images = fields.previews.filter(Boolean);
+  if (info.preview_images.length > 0) {
+    info.cover_url = info.preview_images[0];
+    info.preview_images = info.preview_images.slice(1);
+  }
+  info.thumb_url = info.cover_url;
+  return info;
+}
+__name(parseJavfreePage, "parseJavfreePage");
+async function parseJavfreeSearch(html, pageURL, fc2ID) {
+  const cards = [];
+  let cur = null;
+  const rw = new HTMLRewriter().on("article.hentry", {
+    element() {
+      cur = { homepage: "", title: "", thumb: "" };
+      cards.push(cur);
+    }
+  }).on("article.hentry h2 a", {
+    element(el) {
+      if (cur && !cur.homepage) cur.homepage = el.getAttribute("href") ?? "";
+    },
+    text(t) {
+      if (cur) cur.title += t.text;
+    }
+  }).on("article.hentry a div img", {
+    element(el) {
+      if (cur && !cur.thumb) cur.thumb = el.getAttribute("src") ?? "";
+    }
+  }).on("article.hentry img", {
+    element(el) {
+      if (cur && !cur.thumb) cur.thumb = el.getAttribute("src") ?? "";
+    }
+  });
+  await rw.transform(new Response(html)).text();
+  const results = [];
+  for (const c of cards) {
+    if (!c.homepage) continue;
+    const homepage = absURL(pageURL, c.homepage);
+    const id = javfreeProvider.parseMovieIDFromURL(homepage);
+    if (!id) continue;
+    const thumb = c.thumb ? absURL(pageURL, c.thumb) : "";
+    const base = thumb.split("/").pop() ?? "";
+    results.push({
+      id,
+      number: `FC2-${fc2ID}`,
+      title: c.title.trim(),
+      provider: "JAVFREE",
+      homepage,
+      actors: [],
+      thumb_url: thumb,
+      cover_url: base ? `https://cf.javfree.me/HLIC/${base}` : "",
+      score: 0,
+      release_date: ""
+    });
+  }
+  return results;
+}
+__name(parseJavfreeSearch, "parseJavfreeSearch");
+var javfreeProvider = {
+  name: "JAVFREE",
+  priority: 993,
+  normalizeMovieID(id) {
+    return id.trim();
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const m = /\/(\d+)\/fc2-ppv-(\d+)/.exec(new URL(rawURL).pathname);
+      return m ? `${m[1]}-${m[2]}` : null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const parts = id.split("-", 2);
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      throw new ProviderError(`invalid id: ${id}`, "invalid");
+    }
+    return javfreeProvider.getMovieInfoByURL(
+      MOVIE_URL17.replace("%s", parts[0]).replace("%s", `fc2-ppv-${parts[1]}`)
+    );
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = javfreeProvider.parseMovieIDFromURL(rawURL);
+    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const r = await fetchPage(rawURL, {
+      providerName: "JAVFREE",
+      notFoundMessage: `movie not found: ${id}`
+    });
+    const info = await parseJavfreePage(r.text, rawURL, id);
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    return info;
+  },
+  normalizeMovieKeyword(keyword) {
+    return fc2ParseNumber(keyword);
+  },
+  async searchMovie(keyword) {
+    const fc2ID = keyword.slice(keyword.lastIndexOf("-") + 1);
+    const url = SEARCH_URL10.replace("%s", encodeURIComponent(fc2ID));
+    const r = await fetchPage(url, { providerName: "JAVFREE" });
+    return parseJavfreeSearch(r.text, url, fc2ID);
+  }
+};
+
+// src/providers/fc2ppvdb.ts
+var MOVIE_URL18 = "https://fc2ppvdb.com/articles/%s";
+function stripTags3(s) {
+  return decodeEntities(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+__name(stripTags3, "stripTags");
+function textPieces(inner) {
+  return inner.split(/<[^>]+>/).map((t) => decodeEntities(t).trim()).filter(Boolean);
+}
+__name(textPieces, "textPieces");
+async function parseFc2ppvdbPage(html, pageURL, id) {
+  const info = baseMovieInfo("FC2PPVDB", id, pageURL);
+  info.number = `FC2-${id}`;
+  try {
+    const fields = await collectFields(html, [
+      { key: "cover", selector: "main a > img", mode: "attr", attr: "src" },
+      { key: "title", selector: "main h2 a", mode: "text" },
+      { key: "ogTitle", selector: 'meta[property="og:title"]', mode: "attr", attr: "content" },
+      { key: "ogImage", selector: 'meta[property="og:image"]', mode: "attr", attr: "content" }
+    ]);
+    if (fields.cover) info.cover_url = absURL(pageURL, fields.cover);
+    info.title = fields.title.trim();
+    if (!info.title) info.title = fields.ogTitle.trim();
+    if (!info.cover_url && fields.ogImage) {
+      info.cover_url = absURL(pageURL, fields.ogImage);
+    }
+  } catch {
+  }
+  info.thumb_url = info.cover_url;
+  const rowRe = /(ID|販売者|女優|モザイク|販売日|収録時間|タグ)：<span[^>]*>([\s\S]*?)<\/span>/g;
+  let m;
+  while ((m = rowRe.exec(html)) !== null) {
+    const label = m[1];
+    const inner = m[2];
+    switch (label) {
+      case "ID":
+        info.id = stripTags3(inner) || info.id;
+        break;
+      case "\u8CA9\u58F2\u8005":
+        info.maker = stripTags3(inner);
+        break;
+      case "\u5973\u512A":
+        info.actors = textPieces(inner);
+        break;
+      case "\u8CA9\u58F2\u65E5":
+        info.release_date = parseDateLoose(stripTags3(inner));
+        break;
+      case "\u53CE\u9332\u6642\u9593":
+        info.runtime = parseRuntime(stripTags3(inner));
+        break;
+      case "\u30BF\u30B0":
+        info.genres = textPieces(inner);
+        break;
+    }
+  }
+  return info;
+}
+__name(parseFc2ppvdbPage, "parseFc2ppvdbPage");
+var fc2ppvdbProvider = {
+  name: "FC2PPVDB",
+  priority: 998,
+  normalizeMovieID(id) {
+    return fc2ParseNumber(id).replace(/^FC2-/, "");
+  },
+  parseMovieIDFromURL(rawURL) {
+    try {
+      const parts = new URL(rawURL).pathname.split("/").filter(Boolean);
+      return parts[parts.length - 1] ?? null;
+    } catch {
+      return null;
+    }
+  },
+  async getMovieInfoByID(id) {
+    const normalized = fc2ppvdbProvider.normalizeMovieID(id);
+    if (!normalized) throw new ProviderError(`invalid id: ${id}`, "invalid");
+    return fc2ppvdbProvider.getMovieInfoByURL(MOVIE_URL18.replace("%s", normalized));
+  },
+  async getMovieInfoByURL(rawURL) {
+    const id = fc2ppvdbProvider.parseMovieIDFromURL(rawURL);
+    if (!id) throw new ProviderError(`cannot parse id from url: ${rawURL}`, "invalid");
+    const r = await fetchPage(rawURL, {
+      providerName: "FC2PPVDB",
+      notFoundMessage: `movie not found: ${id}`
+    });
+    const info = await parseFc2ppvdbPage(r.text, rawURL, id);
+    if (!isValidMovieInfo(info)) {
+      throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
+    }
+    return info;
+  }
+};
+
 // src/index.ts
 var providers = /* @__PURE__ */ new Map();
 for (const p of [
@@ -5350,7 +6415,14 @@ for (const p of [
   gcolleProvider,
   tokyohotProvider,
   madouquProvider,
-  fc2hubProvider
+  fc2hubProvider,
+  dugaProvider,
+  mgsProvider,
+  getchuProvider,
+  aveProvider,
+  sodProvider,
+  javfreeProvider,
+  fc2ppvdbProvider
 ]) {
   providers.set(p.name.toUpperCase(), p);
 }
@@ -5575,7 +6647,14 @@ var HOST_PROVIDERS = [
   ["dahlia-av.jp", "DAHLIA"],
   ["tokyo-hot.com", "TOKYO-HOT"],
   ["madouqu.com", "MADOUQU"],
-  ["javten.com", "FC2HUB"]
+  ["javten.com", "FC2HUB"],
+  ["duga.jp", "DUGA"],
+  ["mgstage.com", "MGS"],
+  ["getchu.com", "GETCHU"],
+  ["aventertainments.com", "AVE"],
+  ["sod.co.jp", "SOD"],
+  ["javfree.me", "JAVFREE"],
+  ["fc2ppvdb.com", "FC2PPVDB"]
 ];
 function providerForURL(rawURL) {
   try {

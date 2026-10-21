@@ -25,6 +25,13 @@ import { parseGcollePage } from "./providers/gcolle";
 import { parseTokyoHotPage } from "./providers/tokyo-hot";
 import { parseMadouquPage } from "./providers/madouqu";
 import { parseFc2hubPage } from "./providers/fc2hub";
+import { parseDugaPage, parseDugaSearchIDs } from "./providers/duga";
+import { parseMgsPage, parseMgsSearch } from "./providers/mgs";
+import { parseGetchuPage } from "./providers/getchu";
+import { parseAvePage, parseAveSearch } from "./providers/ave";
+import { parseSodPage, parseSodSearch } from "./providers/sod";
+import { parseJavfreePage, parseJavfreeSearch } from "./providers/javfree";
+import { parseFc2ppvdbPage } from "./providers/fc2ppvdb";
 
 function htmlResponse(html: string): Response {
   return new Response(html, {
@@ -161,6 +168,62 @@ export default {
         const pageURL = url.searchParams.get("url") ?? "";
         const id = url.searchParams.get("id") ?? "";
         return Response.json(await parseMadouquPage(html, pageURL, id));
+      }
+      case "/parse/duga": {
+        const u = url.searchParams.get("url") ?? "";
+        const id = url.searchParams.get("id") ?? "";
+        return Response.json(await parseDugaPage(html, u, id));
+      }
+      case "/parse/duga-ids": {
+        const u = url.searchParams.get("url") ?? "";
+        return Response.json(await parseDugaSearchIDs(html, u));
+      }
+      case "/parse/mgs": {
+        const u = url.searchParams.get("url") ?? "";
+        const id = url.searchParams.get("id") ?? "";
+        return Response.json(await parseMgsPage(html, u, id));
+      }
+      case "/parse/mgs-search": {
+        const u = url.searchParams.get("url") ?? "";
+        return Response.json(await parseMgsSearch(html, u));
+      }
+      case "/parse/getchu": {
+        const u = url.searchParams.get("url") ?? "";
+        const id = url.searchParams.get("id") ?? "";
+        return Response.json(await parseGetchuPage(html, u, id));
+      }
+      case "/parse/ave": {
+        const u = url.searchParams.get("url") ?? "";
+        const id = url.searchParams.get("id") ?? "";
+        return Response.json(await parseAvePage(html, u, id));
+      }
+      case "/parse/ave-search": {
+        const u = url.searchParams.get("url") ?? "";
+        return Response.json(await parseAveSearch(html, u));
+      }
+      case "/parse/sod": {
+        const u = url.searchParams.get("url") ?? "";
+        const id = url.searchParams.get("id") ?? "";
+        return Response.json(await parseSodPage(html, u, id));
+      }
+      case "/parse/sod-search": {
+        const u = url.searchParams.get("url") ?? "";
+        return Response.json(await parseSodSearch(html, u));
+      }
+      case "/parse/javfree": {
+        const u = url.searchParams.get("url") ?? "";
+        const id = url.searchParams.get("id") ?? "";
+        return Response.json(await parseJavfreePage(html, u, id));
+      }
+      case "/parse/javfree-search": {
+        const u = url.searchParams.get("url") ?? "";
+        const fc2id = url.searchParams.get("fc2id") ?? "";
+        return Response.json(await parseJavfreeSearch(html, u, fc2id));
+      }
+      case "/parse/fc2ppvdb": {
+        const u = url.searchParams.get("url") ?? "";
+        const id = url.searchParams.get("id") ?? "";
+        return Response.json(await parseFc2ppvdbPage(html, u, id));
       }
       case "/parse/fc2hub": {
         const pageURL = url.searchParams.get("url") ?? "";

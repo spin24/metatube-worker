@@ -5,10 +5,11 @@ to **Cloudflare Workers (free tier)**.
 
 Scope of this port, by design:
 
-- **23 movie providers**: FANZA, JavBus, AVBASE plus the batch-1 set —
+- **30 movie providers**: FANZA, JavBus, AVBASE, the batch-1 set —
   1Pondo, 10musume, PACOPACOMAMA, MURAMURA, Caribbeancom, CaribbeancomPR,
   HEYZO, HeyDouga, KIN8, MYWIFE, Pcolle, Gcolle, C0930, H0930, H4610,
-  FALENO, DAHLIA, TOKYO-HOT, MadouQu, fc2hub.
+  FALENO, DAHLIA, TOKYO-HOT, MadouQu, fc2hub — and the batch-2 set —
+  DUGA, MGS, Getchu, AVE, SOD, JAVFREE, FC2PPVDB.
 - **One actor provider: AV-LEAGUE** — actor info + actor search with
   the same lazy D1 cache semantics (`actor_metadata` table).
 - **No image pipeline** — no pigo face detection, no cropping, no goimagehash,
@@ -136,6 +137,32 @@ handled there).
   is the redirect probe (`/search?kw=` → video page).
 - Not yet verified from any egress (blocked in the dev sandbox, first
   real test is production): FALENO, KIN8, Pcolle, fc2hub.
+
+### Batch-2 providers (7)
+
+- **DUGA** info scrape (the page's 作品ID replaces the URL id, as in
+  Go); search resolves only the top 3 hits to full info, like Go.
+- **MGS** needs the `adc=1` cookie; the preview video comes from the
+  sampleplayer JSON endpoint (ISM URL rewritten to .mp4). The Go
+  version's BigThumbURL derivation is dropped — this port's MovieInfo
+  has no big-thumb field. Reviews are not ported (out of scope).
+- **Getchu** (dl.getchu.com, EUC-JP) keys its title/cover/gallery
+  cells off presentational attributes, and its spec rows are read by
+  regex because the page is one nest of layout tables.
+- **AVE** takes IDs from the `pro` query param; search numbers come
+  from jacket image filenames. AVE search may hit the site's
+  verifybot interstitial from some egress IPs.
+- **SOD** reproduces the age-gate flow (follow the enter link with
+  the page as Referer, parse that body) and fails lookups whose cover
+  is still the `now_*.jpg` placeholder, as Go does.
+- **JAVFREE** is FC2-only with dual IDs (`{post}-{number}`); search
+  results all carry the searched number, as in Go.
+- **FC2PPVDB** field rows have bare-text labels (`販売者：` etc.)
+  followed by a span value, extracted by regex.
+
+Not yet verified from the dev sandbox (blocked there; first real
+test is production, as with batch 1): MGS, SOD, FC2PPVDB, and the
+DUGA / AVE / JAVFREE search paths.
 
 ### Actors (AV-LEAGUE)
 `GET /v1/actors/AV-LEAGUE/{id}`, `POST /v1/actors/AV-LEAGUE/lookup` and
