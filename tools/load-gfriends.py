@@ -61,7 +61,12 @@ def post(path: str, payload: dict | None) -> dict:
     req = urllib.request.Request(
         WORKER_URL + path,
         data=json.dumps(payload).encode() if payload is not None else None,
-        headers={"x-admin-key": ADMIN_KEY, "Content-Type": "application/json"},
+        headers={
+            "x-admin-key": ADMIN_KEY,
+            "Content-Type": "application/json",
+            # The workers.dev edge rejects Python's default UA (1010).
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        },
         method="POST" if payload is not None else "GET",
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
