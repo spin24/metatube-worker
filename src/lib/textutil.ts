@@ -44,3 +44,75 @@ export function isUncensored(s: string): boolean {
 export function isFC2(s: string): boolean {
   return FC2_RE.test(s);
 }
+
+/** Port of parser.ParseIDToNumber: "adn00306" -> "ADN-00306". */
+export function parseIDToNumber(s: string): string {
+  const up = s.toUpperCase();
+  const m = /(\d*[A-Z]+)(\d+)/.exec(up);
+  return m ? `${m[1]}-${m[2]}` : up;
+}
+
+/** Port of parser.ParseScore: strips 点, takes the first field, parseFloat. */
+export function parseScore(s: string): number {
+  const fields = s.replace(/点/g, "").trim().split(/\s+/).filter(Boolean);
+  if (fields.length === 0) return 0;
+  const n = parseFloat(fields[0]);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/**
+ * Port of parser.ParseRuntime (via ParseDuration): "1:23:45", "83分",
+ * "PT1H23M", "2h10m" -> whole minutes (truncated).
+ */
+export function parseRuntime(s: string): number {
+  if (!s) return 0;
+  let t = s
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/秒/g, "s")
+    .replace(/分/g, "m")
+    .replace(/時/g, "h")
+    .replace(/时/g, "h")
+    .replace(/sec/g, "s")
+    .replace(/min/g, "m");
+  let m = /(\d+):(\d+):(\d+)/.exec(t);
+  if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  m = /(\d+):(\d+)/.exec(t);
+  if (m) return parseInt(m[1], 10);
+  let total = 0;
+  let found = false;
+  for (const part of t.matchAll(/(\d+)([hms])/g)) {
+    found = true;
+    const v = parseInt(part[1], 10);
+    if (part[2] === "h") total += v * 60;
+    else if (part[2] === "m") total += v;
+    else total += v / 60;
+  }
+  return found ? Math.floor(total) : 0;
+}
+
+const ACTOR_NAME_SEPARATORS = new Set(["、", ";", ",", "(", "（", ")", "）"]);
+
+/**
+ * Port of parser.ParseActorNames: split a keyword into individual actor
+ * names on 、 ; , and parentheses (full/half width).
+ */
+export function parseActorNames(s: string): string[] {
+  const names: string[] = [];
+  let buf = "";
+  const flush = () => {
+    const name = buf.trim();
+    if (name) names.push(name);
+    buf = "";
+  };
+  for (const ch of s) {
+    if (ACTOR_NAME_SEPARATORS.has(ch)) {
+      flush();
+    } else {
+      buf += ch;
+    }
+  }
+  flush();
+  return names;
+}

@@ -1,7 +1,16 @@
 // D1 cache layer — the slim equivalent of the Go engine's GORM-backed
 // store (getMovieInfoFromDB + delayed auto-save in getMovieInfoWithCallback).
 
-import { MovieInfo, MovieSearchResult, isValidMovieInfo, movieInfoToSearchResult } from "./types";
+import {
+  ActorInfo,
+  ActorSearchResult,
+  MovieInfo,
+  MovieSearchResult,
+  actorInfoToSearchResult,
+  isValidActorInfo,
+  isValidMovieInfo,
+  movieInfoToSearchResult,
+} from "./types";
 
 interface MovieRow {
   id: string;
@@ -147,4 +156,130 @@ export async function searchMovieFromDB(
     .map(rowToMovieInfo)
     .filter(isValidMovieInfo)
     .map(movieInfoToSearchResult);
+}
+
+// ---------------------------------------------------------------------------
+// Actors — the actor_metadata table mirrors model.ActorInfo the same way.
+// ---------------------------------------------------------------------------
+
+interface ActorRow {
+  id: string;
+  name: string;
+  provider: string;
+  homepage: string;
+  summary: string;
+  hobby: string;
+  skill: string;
+  blood_type: string;
+  cup_size: string;
+  measurements: string;
+  nationality: string;
+  height: number;
+  aliases: string;
+  images: string;
+  birthday: string;
+  debut_date: string;
+}
+
+function rowToActorInfo(row: ActorRow): ActorInfo {
+  return {
+    id: row.id,
+    name: row.name,
+    provider: row.provider,
+    homepage: row.homepage,
+    summary: row.summary,
+    hobby: row.hobby,
+    skill: row.skill,
+    blood_type: row.blood_type,
+    cup_size: row.cup_size,
+    measurements: row.measurements,
+    nationality: row.nationality,
+    height: row.height,
+    aliases: JSON.parse(row.aliases) as string[],
+    images: JSON.parse(row.images) as string[],
+    birthday: row.birthday,
+    debut_date: row.debut_date,
+  };
+}
+
+export async function getActorInfoFromDB(
+  db: D1Database,
+  provider: string,
+  id: string,
+): Promise<ActorInfo | null> {
+  const row = await db
+    .prepare("SELECT * FROM actor_metadata WHERE provider = ? AND id = ? COLLATE NOCASE")
+    .bind(provider, id)
+    .first<ActorRow>();
+  return row ? rowToActorInfo(row) : null;
+}
+
+export async function saveActorInfoToDB(db: D1Database, info: ActorInfo): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await db
+    .prepare(
+      `INSERT INTO actor_metadata (
+         provider, id, name, homepage, summary, hobby, skill, blood_type,
+         cup_size, measurements, nationality, height, aliases, images,
+         birthday, debut_date, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (provider, id) DO UPDATE SET
+         name = excluded.name,
+         homepage = excluded.homepage,
+         summary = excluded.summary,
+         hobby = excluded.hobby,
+         skill = excluded.skill,
+         blood_type = excluded.blood_type,
+         cup_size = excluded.cup_size,
+         measurements = excluded.measurements,
+         nationality = excluded.nationality,
+         height = excluded.height,
+         aliases = excluded.aliases,
+         images = excluded.images,
+         birthday = excluded.birthday,
+         debut_date = excluded.debut_date,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(
+      info.provider,
+      info.id,
+      info.name,
+      info.homepage,
+      info.summary,
+      info.hobby,
+      info.skill,
+      info.blood_type,
+      info.cup_size,
+      info.measurements,
+      info.nationality,
+      info.height,
+      JSON.stringify(info.aliases),
+      JSON.stringify(info.images),
+      info.birthday,
+      info.debut_date,
+      now,
+      now,
+    )
+    .run();
+}
+
+/**
+ * DB fallback for actor search — mirrors engine.searchActorFromDB: exact
+ * name match (case-insensitive) scoped to one provider.
+ */
+export async function searchActorFromDB(
+  db: D1Database,
+  keyword: string,
+  providerName: string,
+): Promise<ActorSearchResult[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT * FROM actor_metadata WHERE provider = ? AND name = ? COLLATE NOCASE",
+    )
+    .bind(providerName, keyword)
+    .all<ActorRow>();
+  return results
+    .map(rowToActorInfo)
+    .filter(isValidActorInfo)
+    .map(actorInfoToSearchResult);
 }

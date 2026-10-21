@@ -5,7 +5,12 @@ to **Cloudflare Workers (free tier)**.
 
 Scope of this port, by design:
 
-- **Three providers: FANZA, JavBus and AVBASE** (more can follow the same pattern).
+- **23 movie providers**: FANZA, JavBus, AVBASE plus the batch-1 set —
+  1Pondo, 10musume, PACOPACOMAMA, MURAMURA, Caribbeancom, CaribbeancomPR,
+  HEYZO, HeyDouga, KIN8, MYWIFE, Pcolle, Gcolle, C0930, H0930, H4610,
+  FALENO, DAHLIA, TOKYO-HOT, MadouQu, fc2hub.
+- **One actor provider: AV-LEAGUE** — actor info + actor search with
+  the same lazy D1 cache semantics (`actor_metadata` table).
 - **No image pipeline** — no pigo face detection, no cropping, no goimagehash,
   no jpegli. Image URLs are returned exactly as the provider serves them.
 - **D1 instead of GORM + SQLite/PostgreSQL** for the metadata cache.
@@ -96,6 +101,57 @@ number) from the work record — in this port the delegation target is
 FANZA only, and works without a FANZA product fall back to the work
 record itself. Work IDs may carry a prefix (`prestige:ABP-588`).
 
+### Batch-1 providers (20)
+
+Ports of the Go providers' info lookups; the ones with a Go
+`MovieSearcher` (DAHLIA, FALENO, TOKYO-HOT, MadouQu, fc2hub) also search.
+Shared plumbing lives in `src/lib/scrape.ts` (fetch + charset-aware
+decoding — Caribbeancom and the 0930 family still serve EUC-JP — and
+HTMLRewriter field/label-row collectors; note HTMLRewriter rejects
+positional pseudo-classes and leaves entities raw in text chunks, both
+handled there).
+
+- **1Pondo family** (`pondo-core.ts`: 1Pondo / 10musume / PACOPACOMAMA /
+  MURAMURA) is JSON-API based — detail + gallery JSON endpoints, no HTML.
+- **Caribbeancom family** (`carib-core.ts`) parses `#moviepages` rows;
+  the score is the star-character count, as in Go.
+- **0930 family** (`site0930.ts`: C0930 / H0930 / H4610) reads the
+  JSON-LD block plus the `#movieInfo` definition list; numbers are
+  `{provider}-{id}` lowercased.
+- **FALENO / DAHLIA** (`faleno-core.ts`) share one site engine
+  (WordPress-style `/?s=` search, `modal=off` cookie, no redirect
+  following on search — the body is parsed as-is).
+- **HEYZO** additionally resolves the player script's m3u8 to the MP4
+  sample URL; **HeyDouga** pulls its score from a rating JSON and genres
+  from a tag POST (best-effort).
+- **Gcolle** targets the site's current redesign (`/adult/contents/{id}`
+  + Product JSON-LD) — the Go version's osCommerce XPaths match nothing
+  on the new layout. **HeyDouga**'s info list is likewise gone from the
+  current pages, so actors/runtime/release there depend on the
+  rating/tag endpoints and the heading cast list.
+- **MadouQu** keeps the Go version's priority `0` (registered but
+  effectively disabled in merged-search ranking).
+- **fc2hub** targets javten.com: JSON-LD primary (the Go version's
+  positional `#content` XPaths duplicate the same fields), and search
+  is the redirect probe (`/search?kw=` → video page).
+- Not yet verified from any egress (blocked in the dev sandbox, first
+  real test is production): FALENO, KIN8, Pcolle, fc2hub.
+
+### Actors (AV-LEAGUE)
+`GET /v1/actors/AV-LEAGUE/{id}`, `POST /v1/actors/AV-LEAGUE/lookup` and
+`GET /v1/actors/search?q=&provider=&fallback=` mirror the movie engine:
+lazy D1 cache in `actor_metadata`, keyword split into names on
+`、;,（）`, per-name results merged with exact-name DB fallback hits,
+filtered to name similarity >= 0.3; the all-provider variant sorts by
+provider priority only. Profiles are scraped from av-league.com actress
+pages (name, aliases, measurements/cup, height, blood type, birthday,
+debut date, nationality, profile image URL).
+
+The other Go actor providers are not ported: Gfriends keeps its whole
+index in one 6.5 MB Filetree.json (parsing it per cold start does not
+fit the free tier's 10 ms CPU budget — it would need a pre-indexed D1
+import), and ThePornDB requires a personal API token.
+
 Errors: `404` not found, `400` invalid input, `502` upstream failure,
 returned as `{ "error": "..." }`.
 
@@ -121,12 +177,10 @@ npm run deploy
 - **Mono-only content** (DVD releases with no digital edition) will 404
   on FANZA info lookups, since the mono HTML path is not ported. (FANZA
   *search* does return mono results, like the Go version.)
-- **Reviews are not implemented** (the GraphQL `UserReviews` query ports
-  trivially if wanted).
-- **FANZA region behaviour from Cloudflare egress IPs is unverified.**
-  The GraphQL API answered fine from generic egress during development,
-  but Cloudflare's own IP ranges may be treated differently — verify with
-  a real ID right after deploying (`GET /v1/movies/FANZA/adn00306`).
+- **Reviews are not ported** (out of scope by decision).
+- FANZA / JavBus / AVBase / AV-LEAGUE are all verified reachable from
+  Cloudflare egress in production; the batch-1 providers are verified
+  per-provider as deployments land (see the note in their section).
 - Free-tier budget: cache hits are ~1–2 ms CPU; a cache miss costs one
   GraphQL subrequest plus a small JSON parse — comfortably inside limits
   for personal use.

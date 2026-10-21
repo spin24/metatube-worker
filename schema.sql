@@ -32,3 +32,32 @@ CREATE TABLE IF NOT EXISTS movie_metadata (
 -- Lookups by (provider, number) back the fallback search path.
 CREATE INDEX IF NOT EXISTS idx_movie_metadata_number
   ON movie_metadata (provider, number);
+
+-- Actor metadata — mirrors model.ActorInfo from metatube-sdk-go.
+-- Arrays (aliases / images) are stored as JSON text, like movies.
+
+CREATE TABLE IF NOT EXISTS actor_metadata (
+  provider     TEXT    NOT NULL,
+  id           TEXT    NOT NULL,
+  name         TEXT    NOT NULL DEFAULT '',
+  homepage     TEXT    NOT NULL DEFAULT '',
+  summary      TEXT    NOT NULL DEFAULT '',
+  hobby        TEXT    NOT NULL DEFAULT '',
+  skill        TEXT    NOT NULL DEFAULT '',
+  blood_type   TEXT    NOT NULL DEFAULT '',
+  cup_size     TEXT    NOT NULL DEFAULT '',
+  measurements TEXT    NOT NULL DEFAULT '',
+  nationality  TEXT    NOT NULL DEFAULT '',
+  height       INTEGER NOT NULL DEFAULT 0,
+  aliases      TEXT    NOT NULL DEFAULT '[]',
+  images       TEXT    NOT NULL DEFAULT '[]',
+  birthday     TEXT    NOT NULL DEFAULT '',
+  debut_date   TEXT    NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL DEFAULT 0,
+  updated_at   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (provider, id)
+);
+
+-- Exact-name lookups back the actor search DB fallback path.
+CREATE INDEX IF NOT EXISTS idx_actor_metadata_name
+  ON actor_metadata (provider, name);

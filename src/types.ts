@@ -86,6 +86,66 @@ export function asSearcher(p: MovieProvider): (MovieProvider & MovieSearcher) | 
     : null;
 }
 
+/** Actor metadata — mirrors model.ActorInfo from the Go SDK. */
+export interface ActorInfo {
+  id: string;
+  name: string;
+  provider: string;
+  homepage: string;
+  summary: string;
+  hobby: string;
+  skill: string;
+  blood_type: string;
+  cup_size: string;
+  measurements: string;
+  nationality: string;
+  height: number;
+  aliases: string[];
+  images: string[];
+  birthday: string;
+  debut_date: string;
+}
+
+export function isValidActorInfo(info: ActorInfo): boolean {
+  return info.id !== "" && info.name !== "" && info.provider !== "" && info.homepage !== "";
+}
+
+/** Subset of ActorInfo returned by actor searches — mirrors model.ActorSearchResult. */
+export interface ActorSearchResult {
+  id: string;
+  name: string;
+  provider: string;
+  homepage: string;
+  aliases: string[];
+  images: string[];
+}
+
+export function isValidActorSearchResult(r: ActorSearchResult): boolean {
+  return r.id !== "" && r.name !== "" && r.provider !== "" && r.homepage !== "";
+}
+
+export function actorInfoToSearchResult(info: ActorInfo): ActorSearchResult {
+  return {
+    id: info.id,
+    name: info.name,
+    provider: info.provider,
+    homepage: info.homepage,
+    aliases: info.aliases,
+    images: info.images,
+  };
+}
+
+export interface ActorProvider {
+  readonly name: string;
+  readonly priority: number;
+  normalizeActorID(id: string): string;
+  parseActorIDFromURL(rawURL: string): string | null;
+  getActorInfoByID(id: string): Promise<ActorInfo>;
+  getActorInfoByURL(rawURL: string): Promise<ActorInfo>;
+  /** All actor providers implement search in the Go SDK (ActorSearcher). */
+  searchActor(keyword: string): Promise<ActorSearchResult[]>;
+}
+
 export class ProviderError extends Error {
   constructor(
     message: string,
