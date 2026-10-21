@@ -6571,7 +6571,7 @@ async function parseFc2Page(html, pageURL, id) {
 }
 __name(parseFc2Page, "parseFc2Page");
 function fc2SummaryIframeURL(html, pageURL) {
-  const m = /<section class="items_article_Contents">[\s\S]*?<iframe[^>]+src="([^"]+)"/.exec(
+  const m = /<section class="items_article_Contents"[^>]*>[\s\S]*?<iframe[^>]+src="([^"]+)"/.exec(
     html
   );
   return m ? absURL(pageURL, m[1]) : "";
@@ -6618,7 +6618,10 @@ var fc2Provider = {
           timeoutMs: 8e3
         });
         const div = /<body[^>]*>\s*<div[^>]*>([\s\S]*?)<\/div>/.exec(sub.text);
-        if (div) info.summary = stripTags3(div[1]);
+        if (div) {
+          const text = stripTags3(div[1]);
+          if (text && !text.includes("\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557")) info.summary = text;
+        }
       } catch {
       }
     }

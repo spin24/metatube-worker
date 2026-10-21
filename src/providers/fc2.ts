@@ -150,7 +150,7 @@ export async function parseFc2Page(
 /** The summary iframe URL inside the article contents section. */
 export function fc2SummaryIframeURL(html: string, pageURL: string): string {
   const m =
-    /<section class="items_article_Contents">[\s\S]*?<iframe[^>]+src="([^"]+)"/.exec(
+    /<section class="items_article_Contents"[^>]*>[\s\S]*?<iframe[^>]+src="([^"]+)"/.exec(
       html,
     );
   return m ? absURL(pageURL, m[1]) : "";
@@ -202,7 +202,12 @@ export const fc2Provider: MovieProvider = {
           timeoutMs: 8000,
         });
         const div = /<body[^>]*>\s*<div[^>]*>([\s\S]*?)<\/div>/.exec(sub.text);
-        if (div) info.summary = stripTags(div[1]);
+        if (div) {
+          const text = stripTags(div[1]);
+          // The widget currently answers plain fetches with a
+          // "failed to load" placeholder; never surface that.
+          if (text && !text.includes("読み込みに失敗")) info.summary = text;
+        }
       } catch {
         // summary is optional
       }
