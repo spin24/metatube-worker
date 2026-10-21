@@ -222,8 +222,15 @@ delta sync (dump → diff → upsert/delete only what changed), so an
 occasional re-run refreshes the index for a handful of row writes;
 `--full` reloads everything (~68k rows_written with D1's index
 accounting — a once-a-day-quota event, not a routine operation).
-ThePornDB's actor provider is not ported: it requires a personal
-API token.
+Fully automatic alternative (recommended): the worker also syncs
+itself — a `scheduled()` handler runs the same flatten + diff
+against D1 directly (no key needed). Add a Cron Trigger in the
+dashboard (Settings → Triggers → Cron Triggers, e.g. `0 20 * * *`
+= 04:00 Asia/Taipei; the same expression is in wrangler.toml) and
+validate once via `POST /admin/gfriends/sync`, which runs the
+identical code path on demand. The loader then remains only a
+disaster-recovery tool. ThePornDB's actor provider is not ported:
+it requires a personal API token.
 
 Errors: `404` not found, `400` invalid input, `502` upstream failure,
 returned as `{ "error": "..." }`.

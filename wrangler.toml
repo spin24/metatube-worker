@@ -23,3 +23,9 @@ persist = true
 enabled = false
 head_sampling_rate = 1
 persist = true
+
+# Daily Gfriends dataset sync (04:00 Asia/Taipei). For dashboard
+# (paste) deployments, add the same expression under the worker's
+# Settings -> Triggers -> Cron Triggers.
+[triggers]
+crons = ["0 20 * * *"]

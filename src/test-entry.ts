@@ -6,6 +6,7 @@
 //   POST /parse/javbus-search            body: JavBus search page HTML
 //   POST /parse/fanza-search             body: DMM search page HTML (307 body)
 import { parseJavbusPage, parseJavbusSearchPage } from "./providers/javbus";
+import { flattenFiletree } from "./lib/gfriends-sync";
 import { extractSearchProducts } from "./providers/fanza";
 import { movieInfoFromWork, searchResultsFromWorks } from "./providers/avbase";
 import {
@@ -47,6 +48,23 @@ export default {
     }
     const html = await request.text();
     switch (url.pathname) {
+      case "/test/gfriends-flatten": {
+        const flat = flattenFiletree(JSON.parse(html));
+        const names = [...flat.keys()].sort();
+        const canon = names
+          .map((n) => `${n}\t${flat.get(n)!.join(",")}`)
+          .join("\n");
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(canon),
+        );
+        const hex = [...new Uint8Array(digest)]
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        let photos = 0;
+        for (const list of flat.values()) photos += list.length;
+        return Response.json({ count: flat.size, photos, sha256: hex });
+      }
       case "/parse/javbus": {
         const id = url.searchParams.get("id") ?? "";
         const info = await parseJavbusPage(

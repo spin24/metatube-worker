@@ -3444,10 +3444,99 @@ var GfriendsProvider = class {
   }
 };
 
-// src/lib/scrape.ts
+// src/lib/gfriends-sync.ts
+var FILETREE_URL = "https://raw.githubusercontent.com/gfriends/gfriends/master/Filetree.json";
+var CONTENT_BASE = "https://raw.githubusercontent.com/gfriends/gfriends/master/Content";
 var UA3 = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+function quotePySegment(s) {
+  return encodeURIComponent(s).replace(
+    /[!'()*]/g,
+    (ch) => "%" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")
+  );
+}
+__name(quotePySegment, "quotePySegment");
+function quotePyPath(s) {
+  return s.split("/").map(quotePySegment).join("/");
+}
+__name(quotePyPath, "quotePyPath");
+function gfriendsPhotoURL(category, path) {
+  const q = path.indexOf("?");
+  const base = q >= 0 ? path.slice(0, q) : path;
+  const query = q >= 0 ? path.slice(q + 1) : "";
+  const url = `${CONTENT_BASE}/${quotePyPath(category)}/${quotePyPath(base)}`;
+  return query ? `${url}?${query}` : url;
+}
+__name(gfriendsPhotoURL, "gfriendsPhotoURL");
+function stemOf(filename) {
+  const dot = filename.lastIndexOf(".");
+  return dot > 0 ? filename.slice(0, dot) : filename;
+}
+__name(stemOf, "stemOf");
+function flattenFiletree(tree) {
+  const byName = /* @__PURE__ */ new Map();
+  for (const [category, files] of Object.entries(tree.Content ?? {})) {
+    for (const [filename, path] of Object.entries(files)) {
+      const stem = stemOf(filename);
+      if (!stem) continue;
+      let list = byName.get(stem);
+      if (!list) {
+        list = [];
+        byName.set(stem, list);
+      }
+      list.push(gfriendsPhotoURL(category, path));
+    }
+  }
+  for (const list of byName.values()) list.reverse();
+  return byName;
+}
+__name(flattenFiletree, "flattenFiletree");
+async function syncGfriends(env) {
+  const resp = await fetch(FILETREE_URL, { headers: { "User-Agent": UA3 } });
+  if (!resp.ok) {
+    throw new Error(`filetree fetch failed: http ${resp.status}`);
+  }
+  const fresh = flattenFiletree(await resp.json());
+  const db2 = env.DB;
+  await db2.exec(
+    `CREATE TABLE IF NOT EXISTS ${GFRIENDS_TABLE} (name TEXT PRIMARY KEY, images TEXT NOT NULL)`
+  );
+  const { results } = await db2.prepare(`SELECT name, images FROM ${GFRIENDS_TABLE}`).all();
+  const current = new Map(results.map((r) => [r.name, r.images]));
+  const upserts = [];
+  for (const [name, images] of fresh) {
+    const serialized = JSON.stringify(images);
+    if (current.get(name) !== serialized) upserts.push([name, serialized]);
+  }
+  const deletes = [];
+  for (const name of current.keys()) {
+    if (!fresh.has(name)) deletes.push(name);
+  }
+  const CHUNK = 200;
+  if (deletes.length > 0) {
+    const del = db2.prepare(`DELETE FROM ${GFRIENDS_TABLE} WHERE name = ?`);
+    for (let i = 0; i < deletes.length; i += CHUNK) {
+      await db2.batch(deletes.slice(i, i + CHUNK).map((n) => del.bind(n)));
+    }
+  }
+  if (upserts.length > 0) {
+    const ins = db2.prepare(
+      `INSERT OR REPLACE INTO ${GFRIENDS_TABLE} (name, images) VALUES (?, ?)`
+    );
+    for (let i = 0; i < upserts.length; i += CHUNK) {
+      await db2.batch(
+        upserts.slice(i, i + CHUNK).map(([n, s]) => ins.bind(n, s))
+      );
+    }
+  }
+  const total = (await db2.prepare(`SELECT COUNT(*) AS n FROM ${GFRIENDS_TABLE}`).first())?.n ?? 0;
+  return { upserts: upserts.length, deletes: deletes.length, total };
+}
+__name(syncGfriends, "syncGfriends");
+
+// src/lib/scrape.ts
+var UA4 = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 async function fetchText(url, opts = {}) {
-  const headers = { "User-Agent": UA3 };
+  const headers = { "User-Agent": UA4 };
   if (opts.cookie) headers["Cookie"] = opts.cookie;
   if (opts.referer) headers["Referer"] = opts.referer;
   if (opts.contentType) headers["Content-Type"] = opts.contentType;
@@ -7245,6 +7334,14 @@ app.post("/v1/actors/:provider/lookup", async (c) => {
   const info = await getActorInfo(c.env, provider, id, lazy);
   return c.json({ data: info });
 });
+app.post("/admin/gfriends/sync", async (c) => {
+  requireAdminKey(c);
+  const result = await syncGfriends(c.env);
+  console.log(
+    `gfriends sync (manual): ${result.upserts} upserts, ${result.deletes} deletes, total ${result.total}`
+  );
+  return c.json({ data: result });
+});
 app.onError((err, c) => {
   if (err instanceof ProviderError) {
     const status = err.kind === "not_found" ? 404 : err.kind === "invalid" ? 400 : err.kind === "unsupported" ? 501 : 502;
@@ -7253,7 +7350,15 @@ app.onError((err, c) => {
   return c.json({ error: String(err) }, 500);
 });
 app.notFound((c) => c.json({ error: "not found" }, 404));
-var index_default = app;
+var index_default = {
+  fetch: app.fetch,
+  async scheduled(_event, env, _ctx) {
+    const result = await syncGfriends(env);
+    console.log(
+      `gfriends sync (cron): ${result.upserts} upserts, ${result.deletes} deletes, total ${result.total}`
+    );
+  }
+};
 export {
   index_default as default
 };

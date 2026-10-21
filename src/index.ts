@@ -50,6 +50,7 @@ import { JavbusProvider } from "./providers/javbus";
 import { AvbaseProvider } from "./providers/avbase";
 import { AvleagueProvider } from "./providers/av-league";
 import { GfriendsProvider, bindGfriendsDB, GFRIENDS_TABLE } from "./providers/gfriends";
+import { syncGfriends } from "./lib/gfriends-sync";
 import { pondoProviders } from "./providers/pondo-core";
 import { caribProviders } from "./providers/carib-core";
 import { site0930Providers } from "./providers/site0930";
@@ -629,6 +630,18 @@ app.post("/v1/actors/:provider/lookup", async (c) => {
   return c.json({ data: info });
 });
 
+// Manual trigger for the same sync the Cron Trigger runs — used
+// to validate a fresh deploy (check cpuTimeMs in Workers Logs)
+// before relying on the schedule.
+app.post("/admin/gfriends/sync", async (c) => {
+  requireAdminKey(c);
+  const result = await syncGfriends(c.env);
+  console.log(
+    `gfriends sync (manual): ${result.upserts} upserts, ${result.deletes} deletes, total ${result.total}`,
+  );
+  return c.json({ data: result });
+});
+
 app.onError((err, c) => {
   if (err instanceof ProviderError) {
     const status =
@@ -646,4 +659,16 @@ app.onError((err, c) => {
 
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(
+    _event: ScheduledEvent,
+    env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
+    const result = await syncGfriends(env);
+    console.log(
+      `gfriends sync (cron): ${result.upserts} upserts, ${result.deletes} deletes, total ${result.total}`,
+    );
+  },
+};
