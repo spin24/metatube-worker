@@ -11,7 +11,7 @@ compatibility_date = "2025-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "metatube"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "4d7dbdd6-3977-40cc-b68b-261ebbe340e3"
 
 # Workers Logs (dashboard: Settings -> Observability). Free tier
 # keeps 3 days of logs; invocation logs record every request's
