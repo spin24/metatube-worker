@@ -7188,36 +7188,36 @@ async function searchAllProviders(env, keyword, fallback) {
 }
 __name(searchAllProviders, "searchAllProviders");
 var HOST_PROVIDERS = [
-  ["dmm.co.jp", "FANZA"],
-  ["javbus.com", "JAVBUS"],
-  ["avbase.net", "AVBASE"],
-  ["1pondo.tv", "1PONDO"],
-  ["10musume.com", "10MUSUME"],
-  ["pacopacomama.com", "PACOPACOMAMA"],
-  ["muramura.tv", "MURAMURA"],
-  ["caribbeancompr.com", "CARIBBEANCOMPR"],
-  ["caribbeancom.com", "CARIBBEANCOM"],
-  ["heyzo.com", "HEYZO"],
-  ["heydouga.com", "HEYDOUGA"],
-  ["mywife.cc", "MYWIFE"],
-  ["pcolle.com", "PCOLLE"],
-  ["gcolle.net", "GCOLLE"],
-  ["c0930.com", "C0930"],
-  ["h0930.com", "H0930"],
-  ["h4610.com", "H4610"],
-  ["faleno.jp", "FALENO"],
-  ["dahlia-av.jp", "DAHLIA"],
-  ["tokyo-hot.com", "TOKYO-HOT"],
-  ["madouqu.com", "MADOUQU"],
-  ["javten.com", "FC2HUB"],
-  ["duga.jp", "DUGA"],
-  ["mgstage.com", "MGS"],
-  ["getchu.com", "GETCHU"],
-  ["aventertainments.com", "AVE"],
-  ["sod.co.jp", "SOD"],
-  ["javfree.me", "JAVFREE"],
-  ["fc2.com", "FC2"],
-  ["fc2cmadb.com", "FC2CMADB"]
+  ["dmm.co.jp", "FANZA", "https://www.dmm.co.jp/"],
+  ["javbus.com", "JAVBUS", "https://www.javbus.com/"],
+  ["avbase.net", "AVBASE", "https://www.avbase.net/"],
+  ["1pondo.tv", "1PONDO", "https://www.1pondo.tv/"],
+  ["10musume.com", "10MUSUME", "https://www.10musume.com/"],
+  ["pacopacomama.com", "PACOPACOMAMA", "https://www.pacopacomama.com/"],
+  ["muramura.tv", "MURAMURA", "https://www.muramura.tv/"],
+  ["caribbeancompr.com", "CARIBBEANCOMPR", "https://www.caribbeancompr.com/"],
+  ["caribbeancom.com", "CARIBBEANCOM", "https://www.caribbeancom.com/"],
+  ["heyzo.com", "HEYZO", "https://www.heyzo.com/"],
+  ["heydouga.com", "HEYDOUGA", "https://www.heydouga.com/"],
+  ["mywife.cc", "MYWIFE", "https://mywife.cc/"],
+  ["pcolle.com", "PCOLLE", "https://www.pcolle.com/"],
+  ["gcolle.net", "GCOLLE", "https://gcolle.net/"],
+  ["c0930.com", "C0930", "https://www.c0930.com/"],
+  ["h0930.com", "H0930", "https://www.h0930.com/"],
+  ["h4610.com", "H4610", "https://www.h4610.com/"],
+  ["faleno.jp", "FALENO", "https://faleno.jp/top/"],
+  ["dahlia-av.jp", "DAHLIA", "https://dahlia-av.jp/"],
+  ["tokyo-hot.com", "TOKYO-HOT", "https://my.tokyo-hot.com/"],
+  ["madouqu.com", "MADOUQU", "https://madouqu.com/"],
+  ["javten.com", "FC2HUB", "https://javten.com/"],
+  ["duga.jp", "DUGA", "https://duga.jp/"],
+  ["mgstage.com", "MGS", "https://www.mgstage.com/"],
+  ["getchu.com", "GETCHU", "https://dl.getchu.com/"],
+  ["aventertainments.com", "AVE", "https://www.aventertainments.com/"],
+  ["sod.co.jp", "SOD", "https://ec.sod.co.jp/prime/"],
+  ["javfree.me", "JAVFREE", "https://javfree.me/"],
+  ["fc2.com", "FC2", "https://adult.contents.fc2.com/"],
+  ["fc2cmadb.com", "FC2CMADB", "https://fc2cmadb.com/"]
 ];
 function providerForURL(rawURL) {
   try {
@@ -7244,10 +7244,15 @@ app.get(
 app.get(
   "/v1/providers",
   (c) => c.json({
-    data: [
-      ...[...providers.values()].map((p) => ({ name: p.name, type: "movie" })),
-      ...[...actorProviders.values()].map((p) => ({ name: p.name, type: "actor" }))
-    ]
+    data: {
+      movie_providers: Object.fromEntries(
+        HOST_PROVIDERS.map(([, name, url]) => [getProvider(name).name, url])
+      ),
+      actor_providers: {
+        "AV-LEAGUE": "https://www.av-league.com/",
+        Gfriends: "https://github.com/gfriends/gfriends"
+      }
+    }
   })
 );
 app.get("/v1/movies/search", async (c) => {

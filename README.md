@@ -64,7 +64,7 @@ Notes:
 | Route | Description |
 |---|---|
 | `GET /` | Service info + provider list |
-| `GET /v1/providers` | Registered providers |
+| `GET /v1/providers` | Go-compatible `data.movie_providers` / `data.actor_providers` name-to-website maps |
 | `GET /v1/movies/search?q=&provider=&fallback=` | Movie search (below) |
 | `GET /v1/movies/:provider/:id` | Movie info. Lazy by default: D1 first, provider fetch on miss, then upsert. `?lazy=false` forces a refresh. |
 | `POST /v1/movies/:provider/lookup` | Body `{ "url": "..." }` — parse the ID from a provider URL, then same flow as above. |
@@ -91,6 +91,29 @@ Errors: `404` not found, `400` invalid input, `501` unsupported,
 - If `q` is a URL, it resolves directly to that item's info.
 - Actor keywords are split into names on `、;,（）`; per-name
   results are filtered to name similarity ≥ 0.3.
+
+## Provider inventory verification
+
+`GET /v1/providers` uses the Go server contract, including each provider's
+registered name and public website:
+
+```json
+{"data":{"movie_providers":{"FANZA":"https://www.dmm.co.jp/"},"actor_providers":{"Gfriends":"https://github.com/gfriends/gfriends"}}}
+```
+
+The example is abbreviated; the endpoint includes every registered provider.
+The former `data: [{name,type}, ...]` array is replaced, so clients consuming
+that array must use the two maps instead. `GET /` keeps its existing format.
+
+Run `npm run typecheck`, `npm run build` and `npm run test:providers`.
+`npm run build` regenerates the tracked dashboard bundle from the production
+entry; Git deployments continue to use Wrangler directly. Run
+`npm run test:providers -- dist/metatube-worker.bundle.js` to verify the
+dashboard bundle through the same HTTP checks. The HTTP test runs the
+production entry locally with the DB-free test config; it does not access D1
+or external providers. It writes the response, assertion results and worker
+log to the printed temporary artifact directory. A listed website does not
+prove that the external provider is currently reachable.
 
 ## Database (D1)
 
