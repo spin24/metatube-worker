@@ -5817,6 +5817,12 @@ var SEARCH_URL8 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&cul
 var DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
 var DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
 var BING_URL = "https://www.bing.com/search?q=%s";
+var learnedNumbers = /* @__PURE__ */ new Map();
+var learnedKeywords = /* @__PURE__ */ new Map();
+function normNum(s) {
+  return s.toUpperCase().replace(/[-_\s]/g, "");
+}
+__name(normNum, "normNum");
 function aveParseNumber(s) {
   const m = /\/(?:dvd\d)?([a-z\d-_]+)\.(?:jpe?g|png|gif|webp)/i.exec(s);
   return m ? m[1].toUpperCase() : "";
@@ -5993,6 +5999,7 @@ var aveProvider = {
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
     }
+    if (info.number) learnedNumbers.set(normNum(info.number), info.id);
     return info;
   },
   normalizeMovieKeyword(keyword) {
@@ -6000,9 +6007,30 @@ var aveProvider = {
     return keyword.trim().toUpperCase();
   },
   async searchMovie(keyword) {
-    const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
+    const kwNorm = normNum(keyword);
+    const numberLike = /^[A-Z]+\d+$/.test(kwNorm) || /^\d+$/.test(kwNorm);
+    if (numberLike) {
+      const known = learnedNumbers.get(kwNorm);
+      if (known) {
+        try {
+          const info = await aveProvider.getMovieInfoByID(known);
+          if (isValidMovieInfo(info) && normNum(info.number) === kwNorm) {
+            return [movieInfoToSearchResult(info)];
+          }
+        } catch {
+          learnedNumbers.delete(kwNorm);
+        }
+      }
+    }
+    const queries = [
+      `site:aventertainments.com ${keyword}`,
+      `site:aventertainments.com ${keyword}`,
+      `aventertainments.com ${keyword}`
+    ];
     let ids = [];
-    for (let round = 0; round < 2 && ids.length === 0; round++) {
+    for (const queryText of queries) {
+      if (ids.length > 0) break;
+      const q = encodeURIComponent(queryText);
       const pages = await Promise.allSettled(
         [DDG_URL, DDG_LITE_URL, BING_URL].map(
           (template) => fetchText(template.replace("%s", q), {
@@ -6021,6 +6049,9 @@ var aveProvider = {
       }
     }
     if (ids.length === 0) {
+      ids = learnedKeywords.get(kwNorm) ?? [];
+    }
+    if (ids.length === 0) {
       const url = SEARCH_URL8.replace("%s", encodeURIComponent(keyword));
       const r = await fetchPage(url, { providerName: "AVE" });
       return parseAveSearch(r.text, url);
@@ -6034,17 +6065,19 @@ var aveProvider = {
         infos.push(s.value);
       }
     }
-    const norm = /* @__PURE__ */ __name((s) => s.toUpperCase().replace(/[-_\s]/g, ""), "norm");
-    const kw = norm(keyword);
-    const numberLike = /^[A-Z]+\d+$/.test(kw) || /^\d+$/.test(kw);
+    learnedKeywords.set(kwNorm, ids.slice(0, 8));
+    for (const info of infos) {
+      if (info.number) learnedNumbers.set(normNum(info.number), info.id);
+    }
+    const kw = kwNorm;
     let kept = infos;
     if (numberLike) {
-      const exact = infos.filter((i) => norm(i.number) === kw);
+      const exact = infos.filter((i) => normNum(i.number) === kw);
       if (exact.length > 0) {
         kept = exact;
       } else {
         const near = infos.filter(
-          (i) => compareStrings(norm(i.number), kw) >= 0.8
+          (i) => compareStrings(normNum(i.number), kw) >= 0.8
         );
         if (near.length > 0) kept = near;
       }

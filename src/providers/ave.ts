@@ -37,6 +37,18 @@ const DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
 const DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
 const BING_URL = "https://www.bing.com/search?q=%s";
 
+// Learned mappings, kept in module state for the isolate's lifetime.
+// Search engines are flaky per-request, but a number -> product
+// mapping, once verified against real metadata, does not change:
+// repeat lookups resolve directly without touching an engine again.
+// Info lookups teach the map too.
+const learnedNumbers = new Map<string, string>();
+const learnedKeywords = new Map<string, string[]>();
+
+function normNum(s: string): string {
+  return s.toUpperCase().replace(/[-_\s]/g, "");
+}
+
 /** Port of the Go parserNumber(): number from a jacket image URL. */
 export function aveParseNumber(s: string): string {
   const m = /\/(?:dvd\d)?([a-z\d-_]+)\.(?:jpe?g|png|gif|webp)/i.exec(s);
@@ -246,6 +258,8 @@ export const aveProvider: MovieProvider & MovieSearcher = {
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${id}`, "not_found");
     }
+    // Teach the search fast-path (see learnedNumbers above).
+    if (info.number) learnedNumbers.set(normNum(info.number), info.id);
     return info;
   },
 
@@ -255,13 +269,33 @@ export const aveProvider: MovieProvider & MovieSearcher = {
   },
 
   async searchMovie(keyword: string): Promise<MovieSearchResult[]> {
-    const q = encodeURIComponent(`site:aventertainments.com ${keyword}`);
-    // DDG (both endpoints) randomly answers with a challenge or
-    // empty page — from some egress IPs more often than others — so
-    // the engines race in parallel rounds; the first non-empty
-    // candidate list (in engine preference order) wins.
+    const kwNorm = normNum(keyword);
+    const numberLike = /^[A-Z]+\d+$/.test(kwNorm) || /^\d+$/.test(kwNorm);
+
+    // Fast path: a previously verified mapping for this number.
+    if (numberLike) {
+      const known = learnedNumbers.get(kwNorm);
+      if (known) {
+        try {
+          const info = await aveProvider.getMovieInfoByID(known);
+          if (isValidMovieInfo(info) && normNum(info.number) === kwNorm) {
+            return [movieInfoToSearchResult(info)];
+          }
+        } catch {
+          learnedNumbers.delete(kwNorm);
+        }
+      }
+    }
+
+    const queries = [
+      `site:aventertainments.com ${keyword}`,
+      `site:aventertainments.com ${keyword}`,
+      `aventertainments.com ${keyword}`,
+    ];
     let ids: string[] = [];
-    for (let round = 0; round < 2 && ids.length === 0; round++) {
+    for (const queryText of queries) {
+      if (ids.length > 0) break;
+      const q = encodeURIComponent(queryText);
       const pages = await Promise.allSettled(
         [DDG_URL, DDG_LITE_URL, BING_URL].map((template) =>
           fetchText(template.replace("%s", q), {
@@ -280,6 +314,9 @@ export const aveProvider: MovieProvider & MovieSearcher = {
       }
     }
     if (ids.length === 0) {
+      ids = learnedKeywords.get(kwNorm) ?? [];
+    }
+    if (ids.length === 0) {
       // Last resort: the site's own search (works only if the egress
       // IP is not bot-gated).
       const url = SEARCH_URL.replace("%s", encodeURIComponent(keyword));
@@ -296,18 +333,21 @@ export const aveProvider: MovieProvider & MovieSearcher = {
         infos.push(s.value);
       }
     }
-    const norm = (s: string) => s.toUpperCase().replace(/[-_\s]/g, "");
-    const kw = norm(keyword);
-    const numberLike = /^[A-Z]+\d+$/.test(kw) || /^\d+$/.test(kw);
+    // Learn every verified mapping this resolution produced.
+    learnedKeywords.set(kwNorm, ids.slice(0, 8));
+    for (const info of infos) {
+      if (info.number) learnedNumbers.set(normNum(info.number), info.id);
+    }
+    const kw = kwNorm;
     let kept = infos;
     if (numberLike) {
-      const exact = infos.filter((i) => norm(i.number) === kw);
+      const exact = infos.filter((i) => normNum(i.number) === kw);
       if (exact.length > 0) {
         kept = exact;
       } else {
         // Near misses (e.g. MKD-S03 for MKBD-S03) beat an empty page.
         const near = infos.filter(
-          (i) => compareStrings(norm(i.number), kw) >= 0.8,
+          (i) => compareStrings(normNum(i.number), kw) >= 0.8,
         );
         if (near.length > 0) kept = near;
       }
