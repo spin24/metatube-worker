@@ -5341,22 +5341,30 @@ var fc2hubProvider = {
 var DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
 var DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
 var BING_URL = "https://www.bing.com/search?q=%s";
+async function raceOneVariant(providerName, queryText, extract) {
+  const q = encodeURIComponent(queryText);
+  const pages = await Promise.allSettled(
+    [DDG_URL, DDG_LITE_URL, BING_URL].map(
+      (template) => fetchText(template.replace("%s", q), {
+        providerName,
+        timeoutMs: 6e3
+      })
+    )
+  );
+  for (const page of pages) {
+    if (page.status !== "fulfilled") continue;
+    const found = extract(page.value.text);
+    if (found.length > 0) return found;
+  }
+  return [];
+}
+__name(raceOneVariant, "raceOneVariant");
 async function raceSearchEngines(providerName, queryVariants, extract) {
-  for (const queryText of queryVariants) {
-    const q = encodeURIComponent(queryText);
-    const pages = await Promise.allSettled(
-      [DDG_URL, DDG_LITE_URL, BING_URL].map(
-        (template) => fetchText(template.replace("%s", q), {
-          providerName,
-          timeoutMs: 6e3
-        })
-      )
-    );
-    for (const page of pages) {
-      if (page.status !== "fulfilled") continue;
-      const found = extract(page.value.text);
-      if (found.length > 0) return found;
-    }
+  const perVariant = await Promise.all(
+    queryVariants.map((q) => raceOneVariant(providerName, q, extract))
+  );
+  for (const found of perVariant) {
+    if (found.length > 0) return found;
   }
   return [];
 }
@@ -5876,9 +5884,6 @@ var getchuProvider = {
 // src/providers/ave.ts
 var MOVIE_URL14 = "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
 var SEARCH_URL8 = "https://www.aventertainments.com/dvd/search?lang=2&cat=29&culture=ja-JP&keyword=%s&searchby=keyword";
-var DDG_URL2 = "https://html.duckduckgo.com/html/?q=%s";
-var DDG_LITE_URL2 = "https://lite.duckduckgo.com/lite/?q=%s";
-var BING_URL2 = "https://www.bing.com/search?q=%s";
 var learnedNumbers2 = /* @__PURE__ */ new Map();
 var learnedKeywords2 = /* @__PURE__ */ new Map();
 function normNum2(s) {
@@ -6084,32 +6089,15 @@ var aveProvider = {
         }
       }
     }
-    const queries = [
-      `site:aventertainments.com ${keyword}`,
-      `site:aventertainments.com ${keyword}`,
-      `aventertainments.com ${keyword}`
-    ];
-    let ids = [];
-    for (const queryText of queries) {
-      if (ids.length > 0) break;
-      const q = encodeURIComponent(queryText);
-      const pages = await Promise.allSettled(
-        [DDG_URL2, DDG_LITE_URL2, BING_URL2].map(
-          (template) => fetchText(template.replace("%s", q), {
-            providerName: "AVE",
-            timeoutMs: 6e3
-          })
-        )
-      );
-      for (const page of pages) {
-        if (page.status !== "fulfilled") continue;
-        const found = parseAveCandidateIDs(page.value.text);
-        if (found.length > 0) {
-          ids = found;
-          break;
-        }
-      }
-    }
+    let ids = await raceSearchEngines(
+      "AVE",
+      [
+        `site:aventertainments.com ${keyword}`,
+        `site:aventertainments.com ${keyword}`,
+        `aventertainments.com ${keyword}`
+      ],
+      parseAveCandidateIDs
+    );
     if (ids.length === 0) {
       ids = learnedKeywords2.get(kwNorm) ?? [];
     }
@@ -6924,7 +6912,12 @@ async function searchActorSingle(env, provider, keyword, fallback) {
 __name(searchActorSingle, "searchActorSingle");
 async function searchActorAll(env, keyword, fallback) {
   const settled = await Promise.allSettled(
-    [...actorProviders.values()].map((p) => searchActorSingle(env, p, keyword, fallback))
+    [...actorProviders.values()].map(
+      (p) => withDeadline(
+        searchActorSingle(env, p, keyword, fallback),
+        []
+      )
+    )
   );
   let results = settled.flatMap(
     (s) => s.status === "fulfilled" ? s.value : []
@@ -7044,13 +7037,24 @@ async function searchSingleProvider(env, provider, keyword, fallback) {
   return merged;
 }
 __name(searchSingleProvider, "searchSingleProvider");
+var MERGED_SEARCH_DEADLINE_MS = 1e4;
+function withDeadline(p, empty) {
+  const guarded = p.catch(() => empty);
+  return Promise.race([
+    guarded,
+    new Promise(
+      (resolve) => setTimeout(() => resolve(empty), MERGED_SEARCH_DEADLINE_MS)
+    )
+  ]);
+}
+__name(withDeadline, "withDeadline");
 async function searchAllProviders(env, keyword, fallback) {
   const searchers = [...providers.values()].map((p) => asSearcher(p)).filter((s) => s !== null);
   const settled = await Promise.allSettled(
     searchers.map(async (s) => {
       const kw = s.normalizeMovieKeyword(keyword);
       if (!kw) return [];
-      return s.searchMovie(kw);
+      return withDeadline(s.searchMovie(kw), []);
     })
   );
   let results = settled.flatMap(

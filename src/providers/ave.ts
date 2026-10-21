@@ -21,6 +21,7 @@ import {
   parseDateLoose,
 } from "../lib/scrape";
 import { compareStrings, isSpecial, parseRuntime } from "../lib/textutil";
+import { raceSearchEngines } from "../lib/engines";
 
 const MOVIE_URL =
   "https://www.aventertainments.com/dvd/detail?pro=%s&lang=2&culture=ja-JP&cat=29";
@@ -33,9 +34,6 @@ const SEARCH_URL =
 // candidate is verified against its real metadata (the engine page
 // text also mentions unrelated "related" products, so unverified
 // hits would be false positives).
-const DDG_URL = "https://html.duckduckgo.com/html/?q=%s";
-const DDG_LITE_URL = "https://lite.duckduckgo.com/lite/?q=%s";
-const BING_URL = "https://www.bing.com/search?q=%s";
 
 // Learned mappings, kept in module state for the isolate's lifetime.
 // Search engines are flaky per-request, but a number -> product
@@ -287,32 +285,15 @@ export const aveProvider: MovieProvider & MovieSearcher = {
       }
     }
 
-    const queries = [
-      `site:aventertainments.com ${keyword}`,
-      `site:aventertainments.com ${keyword}`,
-      `aventertainments.com ${keyword}`,
-    ];
-    let ids: string[] = [];
-    for (const queryText of queries) {
-      if (ids.length > 0) break;
-      const q = encodeURIComponent(queryText);
-      const pages = await Promise.allSettled(
-        [DDG_URL, DDG_LITE_URL, BING_URL].map((template) =>
-          fetchText(template.replace("%s", q), {
-            providerName: "AVE",
-            timeoutMs: 6000,
-          }),
-        ),
-      );
-      for (const page of pages) {
-        if (page.status !== "fulfilled") continue;
-        const found = parseAveCandidateIDs(page.value.text);
-        if (found.length > 0) {
-          ids = found;
-          break;
-        }
-      }
-    }
+    let ids = await raceSearchEngines(
+      "AVE",
+      [
+        `site:aventertainments.com ${keyword}`,
+        `site:aventertainments.com ${keyword}`,
+        `aventertainments.com ${keyword}`,
+      ],
+      parseAveCandidateIDs,
+    );
     if (ids.length === 0) {
       ids = learnedKeywords.get(kwNorm) ?? [];
     }

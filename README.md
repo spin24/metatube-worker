@@ -69,7 +69,10 @@ Mirrors the Go server's `/v1/movies/search` handler and engine:
 
 - `provider` given → search that provider only. Omitted → fan out to all
   search-capable providers concurrently; a failing provider is skipped,
-  never fatal.
+  never fatal. Merged fan-outs give each provider a 10 s deadline (a
+  provider that misses it is skipped for that response) so a slow
+  relay search cannot hold the whole merged result hostage;
+  single-provider searches are unbounded, as in Go.
 - Results are deduped by `provider + id` and, for all-provider search,
   ranked by `similarity(keyword, number) × provider priority`
   (Levenshtein, ported from `common/comparer`). Exact number matches

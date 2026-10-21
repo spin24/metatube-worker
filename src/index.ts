@@ -229,7 +229,12 @@ async function searchActorAll(
   fallback: boolean,
 ): Promise<ActorSearchResult[]> {
   const settled = await Promise.allSettled(
-    [...actorProviders.values()].map((p) => searchActorSingle(env, p, keyword, fallback)),
+    [...actorProviders.values()].map((p) =>
+      withDeadline(
+        searchActorSingle(env, p, keyword, fallback),
+        [] as ActorSearchResult[],
+      ),
+    ),
   );
   let results: ActorSearchResult[] = settled.flatMap((s) =>
     s.status === "fulfilled" ? s.value : [],
@@ -373,6 +378,25 @@ async function searchSingleProvider(
 }
 
 /**
+ * Merged (all-provider) searches wait for the slowest provider, and
+ * phone clients hang up after ~20 s — so each provider gets a 10 s
+ * deadline in merged fan-outs only; a provider that misses it is
+ * skipped for that response. Single-provider searches keep their
+ * unbounded Go semantics.
+ */
+const MERGED_SEARCH_DEADLINE_MS = 10_000;
+
+function withDeadline<T>(p: Promise<T>, empty: T): Promise<T> {
+  const guarded = p.catch(() => empty);
+  return Promise.race([
+    guarded,
+    new Promise<T>((resolve) =>
+      setTimeout(() => resolve(empty), MERGED_SEARCH_DEADLINE_MS),
+    ),
+  ]);
+}
+
+/**
  * All-provider search — mirrors engine.SearchMovieAll: fan out to every
  * search-capable provider (a failing provider is skipped, never fatal),
  * merge DB fallback hits, dedupe by provider+id, then rank by
@@ -390,7 +414,7 @@ async function searchAllProviders(
     searchers.map(async (s) => {
       const kw = s.normalizeMovieKeyword(keyword);
       if (!kw) return [] as MovieSearchResult[];
-      return s.searchMovie(kw);
+      return withDeadline(s.searchMovie(kw), [] as MovieSearchResult[]);
     }),
   );
   let results: MovieSearchResult[] = settled.flatMap((s) =>
