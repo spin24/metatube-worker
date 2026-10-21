@@ -286,10 +286,24 @@ function requireAdminKey(c: { env: Env; req: { header(n: string): string | undef
 app.post("/admin/gfriends/load", async (c) => {
   requireAdminKey(c);
   const body = await c.req
-    .json<{ clear?: boolean; rows?: { name?: string; images?: string[] }[] }>()
-    .catch(() => ({}) as { clear?: boolean; rows?: { name?: string; images?: string[] }[] });
+    .json<{
+      clear?: boolean;
+      rows?: { name?: string; images?: string[] }[];
+      delete?: string[];
+    }>()
+    .catch(
+      () =>
+        ({}) as {
+          clear?: boolean;
+          rows?: { name?: string; images?: string[] }[];
+          delete?: string[];
+        },
+    );
   const rows = (body.rows ?? []).filter(
     (r) => typeof r.name === "string" && r.name !== "" && Array.isArray(r.images),
+  );
+  const deletes = (body.delete ?? []).filter(
+    (n) => typeof n === "string" && n !== "",
   );
   const db = c.env.DB;
   await db.exec(
@@ -297,6 +311,10 @@ app.post("/admin/gfriends/load", async (c) => {
   );
   if (body.clear) {
     await db.exec(`DELETE FROM ${GFRIENDS_TABLE}`);
+  }
+  if (deletes.length > 0) {
+    const del = db.prepare(`DELETE FROM ${GFRIENDS_TABLE} WHERE name = ?`);
+    await db.batch(deletes.map((n) => del.bind(n)));
   }
   if (rows.length > 0) {
     const stmt = db.prepare(
@@ -309,7 +327,23 @@ app.post("/admin/gfriends/load", async (c) => {
   const total = await db
     .prepare(`SELECT COUNT(*) AS n FROM ${GFRIENDS_TABLE}`)
     .first<{ n: number }>();
-  return c.json({ data: { inserted: rows.length, total: total?.n ?? 0 } });
+  return c.json({
+    data: { inserted: rows.length, deleted: deletes.length, total: total?.n ?? 0 },
+  });
+});
+
+// Full table dump (images as the raw stored JSON string) so the
+// loader can diff locally and post only the delta.
+app.get("/admin/gfriends/dump", async (c) => {
+  requireAdminKey(c);
+  try {
+    const { results } = await c.env.DB
+      .prepare(`SELECT name, images FROM ${GFRIENDS_TABLE}`)
+      .all<{ name: string; images: string }>();
+    return c.json({ data: { rows: results } });
+  } catch {
+    return c.json({ data: { rows: [] } });
+  }
 });
 
 app.get("/admin/gfriends/stats", async (c) => {

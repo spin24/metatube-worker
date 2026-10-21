@@ -6960,9 +6960,14 @@ function requireAdminKey(c) {
 __name(requireAdminKey, "requireAdminKey");
 app.post("/admin/gfriends/load", async (c) => {
   requireAdminKey(c);
-  const body = await c.req.json().catch(() => ({}));
+  const body = await c.req.json().catch(
+    () => ({})
+  );
   const rows = (body.rows ?? []).filter(
     (r) => typeof r.name === "string" && r.name !== "" && Array.isArray(r.images)
+  );
+  const deletes = (body.delete ?? []).filter(
+    (n) => typeof n === "string" && n !== ""
   );
   const db2 = c.env.DB;
   await db2.exec(
@@ -6970,6 +6975,10 @@ app.post("/admin/gfriends/load", async (c) => {
   );
   if (body.clear) {
     await db2.exec(`DELETE FROM ${GFRIENDS_TABLE}`);
+  }
+  if (deletes.length > 0) {
+    const del = db2.prepare(`DELETE FROM ${GFRIENDS_TABLE} WHERE name = ?`);
+    await db2.batch(deletes.map((n) => del.bind(n)));
   }
   if (rows.length > 0) {
     const stmt = db2.prepare(
@@ -6980,7 +6989,18 @@ app.post("/admin/gfriends/load", async (c) => {
     );
   }
   const total = await db2.prepare(`SELECT COUNT(*) AS n FROM ${GFRIENDS_TABLE}`).first();
-  return c.json({ data: { inserted: rows.length, total: total?.n ?? 0 } });
+  return c.json({
+    data: { inserted: rows.length, deleted: deletes.length, total: total?.n ?? 0 }
+  });
+});
+app.get("/admin/gfriends/dump", async (c) => {
+  requireAdminKey(c);
+  try {
+    const { results } = await c.env.DB.prepare(`SELECT name, images FROM ${GFRIENDS_TABLE}`).all();
+    return c.json({ data: { rows: results } });
+  } catch {
+    return c.json({ data: { rows: [] } });
+  }
 });
 app.get("/admin/gfriends/stats", async (c) => {
   requireAdminKey(c);

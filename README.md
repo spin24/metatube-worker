@@ -216,8 +216,14 @@ so it is pre-indexed into the `gfriends_actors` D1 table (~34k names)
 by `tools/load-gfriends.py`, which posts batches to the key-guarded
 `POST /admin/gfriends/load` endpoint (create an `ADMIN_KEY` secret,
 run the loader once, then delete the secret; the endpoint creates
-the table itself). ThePornDB's actor provider is not ported: it
-requires a personal API token.
+the table itself). The upstream dataset auto-updates daily, but a
+day's change is only a few names, and the loader defaults to a
+delta sync (dump → diff → upsert/delete only what changed), so an
+occasional re-run refreshes the index for a handful of row writes;
+`--full` reloads everything (~68k rows_written with D1's index
+accounting — a once-a-day-quota event, not a routine operation).
+ThePornDB's actor provider is not ported: it requires a personal
+API token.
 
 Errors: `404` not found, `400` invalid input, `502` upstream failure,
 returned as `{ "error": "..." }`.
