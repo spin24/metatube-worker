@@ -2196,7 +2196,12 @@ var FanzaProvider = class {
   name = "FANZA";
   priority = 1001;
   normalizeMovieID(id) {
-    return id.trim().toLowerCase();
+    const t = id.trim().toLowerCase();
+    const m = /^([a-z]+)-?(\d+)$/.exec(t);
+    if (m) {
+      return m[1] + m[2].padStart(5, "0");
+    }
+    return t;
   }
   parseMovieIDFromURL(rawURL) {
     let url;
@@ -2222,8 +2227,18 @@ var FanzaProvider = class {
     }
     const data = await this.fetchContentPageData(normalized);
     if (!data?.ppvContent) {
+      const bare = /^([a-z]+)0+(\d+)$/.exec(normalized);
+      if (bare) {
+        const alt = await this.fetchContentPageData(bare[1] + bare[2]);
+        if (alt?.ppvContent) {
+          return this.finishInfo(alt, normalized);
+        }
+      }
       throw new ProviderError(`content not found: ${normalized}`, "not_found");
     }
+    return this.finishInfo(data, normalized);
+  }
+  finishInfo(data, normalized) {
     const info = mapContentToMovieInfo(data);
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${normalized}`, "not_found");

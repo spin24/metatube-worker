@@ -120,7 +120,18 @@ export class FanzaProvider implements MovieProvider {
   readonly priority = 1001;
 
   normalizeMovieID(id: string): string {
-    return id.trim().toLowerCase(); // FANZA uses lowercase IDs
+    const t = id.trim().toLowerCase(); // FANZA uses lowercase IDs
+    // Maker numbers (ROYD-369) and mono cids (royd369) address the
+    // same work as the digital cid (royd00369): lowercase label +
+    // digits zero-padded to 5. Without this, number-style IDs went
+    // into the GraphQL query verbatim and found nothing, so clients
+    // fell back to the sparse mono search hit. Already-digital IDs
+    // are idempotent; non-matching shapes pass through untouched.
+    const m = /^([a-z]+)-?(\d+)$/.exec(t);
+    if (m) {
+      return m[1] + m[2].padStart(5, "0");
+    }
+    return t;
   }
 
   parseMovieIDFromURL(rawURL: string): string | null {
@@ -148,8 +159,21 @@ export class FanzaProvider implements MovieProvider {
     }
     const data = await this.fetchContentPageData(normalized);
     if (!data?.ppvContent) {
+      // Fall back to the unpadded cid form: a few labels address
+      // content by the mono-style cid even on the digital API.
+      const bare = /^([a-z]+)0+(\d+)$/.exec(normalized);
+      if (bare) {
+        const alt = await this.fetchContentPageData(bare[1] + bare[2]);
+        if (alt?.ppvContent) {
+          return this.finishInfo(alt, normalized);
+        }
+      }
       throw new ProviderError(`content not found: ${normalized}`, "not_found");
     }
+    return this.finishInfo(data, normalized);
+  }
+
+  private finishInfo(data: ContentPageData, normalized: string): MovieInfo {
     const info = mapContentToMovieInfo(data);
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${normalized}`, "not_found");
