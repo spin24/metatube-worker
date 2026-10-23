@@ -661,35 +661,6 @@ app.post("/v1/actors/:provider/lookup", async (c) => {
 // Manual trigger for the same sync the Cron Trigger runs — used
 // to validate a fresh deploy (check cpuTimeMs in Workers Logs)
 // before relying on the schedule.
-// TEMPORARY probe (remove after the FANZA mono feasibility check):
-// reports what a mono detail page fetch looks like from Workers
-// egress — DMM region-gates these pages for some networks.
-app.get("/admin/probe/mono", async (c) => {
-  requireAdminKey(c);
-  const cid = (c.req.query("cid") ?? "snos413").replace(/[^a-z0-9]/gi, "");
-  const url = `https://www.dmm.co.jp/mono/dvd/-/detail/=/cid=${cid}/`;
-  const resp = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      Cookie: "age_check_done=1",
-    },
-    redirect: "manual",
-  });
-  const body = await resp.text();
-  return c.json({
-    data: {
-      status: resp.status,
-      location: resp.headers.get("location"),
-      bodyLength: body.length,
-      hasTitle: body.includes('id="title"'),
-      hasLdJson: body.includes("application/ld+json"),
-      hasPackageSrc: body.includes(`package-src-${cid}`),
-      regionMarker: body.includes("not-available-in-your-region"),
-    },
-  });
-});
-
 app.post("/admin/gfriends/sync", async (c) => {
   requireAdminKey(c);
   const result = await syncGfriends(c.env);
