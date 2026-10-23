@@ -186,6 +186,7 @@ export async function parseAveSearch(html: string, pageURL: string): Promise<Mov
       actors: [],
       thumb_url: thumb,
       cover_url: thumb.replaceAll("jacket_images", "bigcover"),
+      big_thumb_url: "",
       score: 0,
       release_date: "",
     });

@@ -170,6 +170,7 @@ export async function parseJavfreeSearch(
       actors: [],
       thumb_url: thumb,
       cover_url: base ? `https://cf.javfree.me/HLIC/${base}` : "",
+      big_thumb_url: "",
       score: 0,
       release_date: "",
     });

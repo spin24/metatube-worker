@@ -181,6 +181,7 @@ export async function parseMgsSearch(html: string, pageURL: string): Promise<Mov
       homepage,
       thumb_url: img ? mgsImageSrc(img, true) : "",
       cover_url: img ? mgsImageSrc(img, false) : "",
+      big_thumb_url: "",
       score: parseScore(c.review),
       actors: [],
       release_date: "",

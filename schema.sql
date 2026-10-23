@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS movie_metadata (
   actors                 TEXT    NOT NULL DEFAULT '[]',
   thumb_url              TEXT    NOT NULL DEFAULT '',
   cover_url              TEXT    NOT NULL DEFAULT '',
+  big_thumb_url          TEXT    NOT NULL DEFAULT '',
   preview_video_url      TEXT    NOT NULL DEFAULT '',
   preview_video_hls_url  TEXT    NOT NULL DEFAULT '',
   preview_images         TEXT    NOT NULL DEFAULT '[]',

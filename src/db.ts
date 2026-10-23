@@ -23,6 +23,7 @@ interface MovieRow {
   actors: string;
   thumb_url: string;
   cover_url: string;
+  big_thumb_url: string | null;
   preview_video_url: string;
   preview_video_hls_url: string;
   preview_images: string;
@@ -47,6 +48,7 @@ function rowToMovieInfo(row: MovieRow): MovieInfo {
     actors: JSON.parse(row.actors) as string[],
     thumb_url: row.thumb_url,
     cover_url: row.cover_url,
+    big_thumb_url: row.big_thumb_url ?? "",
     preview_video_url: row.preview_video_url,
     preview_video_hls_url: row.preview_video_hls_url,
     preview_images: JSON.parse(row.preview_images) as string[],
@@ -73,61 +75,82 @@ export async function getMovieInfoFromDB(
 }
 
 export async function saveMovieInfoToDB(db: D1Database, info: MovieInfo): Promise<void> {
+  try {
+    await insertMovieInfo(db, info, true);
+  } catch {
+    // The big_thumb_url column may not exist yet on databases created
+    // before it was added (see schema.sql / the ALTER in the README of
+    // this change). Fall back to the legacy column set so cache writes
+    // keep working until the migration runs.
+    await insertMovieInfo(db, info, false);
+  }
+}
+
+async function insertMovieInfo(
+  db: D1Database,
+  info: MovieInfo,
+  withBigThumb: boolean,
+): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
-  await db
-    .prepare(
-      `INSERT INTO movie_metadata (
-         provider, id, number, title, summary, homepage, director, actors,
-         thumb_url, cover_url, preview_video_url, preview_video_hls_url,
-         preview_images, maker, label, series, genres, score, runtime,
-         release_date, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (provider, id) DO UPDATE SET
-         number = excluded.number,
-         title = excluded.title,
-         summary = excluded.summary,
-         homepage = excluded.homepage,
-         director = excluded.director,
-         actors = excluded.actors,
-         thumb_url = excluded.thumb_url,
-         cover_url = excluded.cover_url,
-         preview_video_url = excluded.preview_video_url,
-         preview_video_hls_url = excluded.preview_video_hls_url,
-         preview_images = excluded.preview_images,
-         maker = excluded.maker,
-         label = excluded.label,
-         series = excluded.series,
-         genres = excluded.genres,
-         score = excluded.score,
-         runtime = excluded.runtime,
-         release_date = excluded.release_date,
-         updated_at = excluded.updated_at`,
-    )
-    .bind(
-      info.provider,
-      info.id,
-      info.number,
-      info.title,
-      info.summary,
-      info.homepage,
-      info.director,
-      JSON.stringify(info.actors),
-      info.thumb_url,
-      info.cover_url,
-      info.preview_video_url,
-      info.preview_video_hls_url,
-      JSON.stringify(info.preview_images),
-      info.maker,
-      info.label,
-      info.series,
-      JSON.stringify(info.genres),
-      info.score,
-      info.runtime,
-      info.release_date,
-      now,
-      now,
-    )
-    .run();
+  const bigCols = withBigThumb ? "big_thumb_url, " : "";
+  const bigVals = withBigThumb ? "?, " : "";
+  const bigSet = withBigThumb ? "big_thumb_url = excluded.big_thumb_url,\n         " : "";
+  const stmt = db.prepare(
+    `INSERT INTO movie_metadata (
+       provider, id, number, title, summary, homepage, director, actors,
+       thumb_url, cover_url, ${bigCols}preview_video_url, preview_video_hls_url,
+       preview_images, maker, label, series, genres, score, runtime,
+       release_date, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${bigVals}?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (provider, id) DO UPDATE SET
+       number = excluded.number,
+       title = excluded.title,
+       summary = excluded.summary,
+       homepage = excluded.homepage,
+       director = excluded.director,
+       actors = excluded.actors,
+       thumb_url = excluded.thumb_url,
+       cover_url = excluded.cover_url,
+       ${bigSet}preview_video_url = excluded.preview_video_url,
+       preview_video_hls_url = excluded.preview_video_hls_url,
+       preview_images = excluded.preview_images,
+       maker = excluded.maker,
+       label = excluded.label,
+       series = excluded.series,
+       genres = excluded.genres,
+       score = excluded.score,
+       runtime = excluded.runtime,
+       release_date = excluded.release_date,
+       updated_at = excluded.updated_at`,
+  );
+  const binds: unknown[] = [
+    info.provider,
+    info.id,
+    info.number,
+    info.title,
+    info.summary,
+    info.homepage,
+    info.director,
+    JSON.stringify(info.actors),
+    info.thumb_url,
+    info.cover_url,
+  ];
+  if (withBigThumb) binds.push(info.big_thumb_url);
+  binds.push(
+    info.preview_video_url,
+    info.preview_video_hls_url,
+    JSON.stringify(info.preview_images),
+    info.maker,
+    info.label,
+    info.series,
+    JSON.stringify(info.genres),
+    info.score,
+    info.runtime,
+    info.release_date,
+    now,
+    now,
+  );
+  await stmt.bind(...binds).run();
 }
 
 /**

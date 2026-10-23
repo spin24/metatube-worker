@@ -1832,6 +1832,7 @@ function movieInfoToSearchResult(info) {
     actors: info.actors,
     thumb_url: info.thumb_url,
     cover_url: info.cover_url,
+    big_thumb_url: info.big_thumb_url,
     score: info.score,
     release_date: info.release_date
   };
@@ -1886,6 +1887,7 @@ function rowToMovieInfo(row) {
     actors: JSON.parse(row.actors),
     thumb_url: row.thumb_url,
     cover_url: row.cover_url,
+    big_thumb_url: row.big_thumb_url ?? "",
     preview_video_url: row.preview_video_url,
     preview_video_hls_url: row.preview_video_hls_url,
     preview_images: JSON.parse(row.preview_images),
@@ -1905,35 +1907,47 @@ async function getMovieInfoFromDB(db2, provider, id) {
 }
 __name(getMovieInfoFromDB, "getMovieInfoFromDB");
 async function saveMovieInfoToDB(db2, info) {
+  try {
+    await insertMovieInfo(db2, info, true);
+  } catch {
+    await insertMovieInfo(db2, info, false);
+  }
+}
+__name(saveMovieInfoToDB, "saveMovieInfoToDB");
+async function insertMovieInfo(db2, info, withBigThumb) {
   const now = Math.floor(Date.now() / 1e3);
-  await db2.prepare(
+  const bigCols = withBigThumb ? "big_thumb_url, " : "";
+  const bigVals = withBigThumb ? "?, " : "";
+  const bigSet = withBigThumb ? "big_thumb_url = excluded.big_thumb_url,\n         " : "";
+  const stmt = db2.prepare(
     `INSERT INTO movie_metadata (
-         provider, id, number, title, summary, homepage, director, actors,
-         thumb_url, cover_url, preview_video_url, preview_video_hls_url,
-         preview_images, maker, label, series, genres, score, runtime,
-         release_date, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (provider, id) DO UPDATE SET
-         number = excluded.number,
-         title = excluded.title,
-         summary = excluded.summary,
-         homepage = excluded.homepage,
-         director = excluded.director,
-         actors = excluded.actors,
-         thumb_url = excluded.thumb_url,
-         cover_url = excluded.cover_url,
-         preview_video_url = excluded.preview_video_url,
-         preview_video_hls_url = excluded.preview_video_hls_url,
-         preview_images = excluded.preview_images,
-         maker = excluded.maker,
-         label = excluded.label,
-         series = excluded.series,
-         genres = excluded.genres,
-         score = excluded.score,
-         runtime = excluded.runtime,
-         release_date = excluded.release_date,
-         updated_at = excluded.updated_at`
-  ).bind(
+       provider, id, number, title, summary, homepage, director, actors,
+       thumb_url, cover_url, ${bigCols}preview_video_url, preview_video_hls_url,
+       preview_images, maker, label, series, genres, score, runtime,
+       release_date, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${bigVals}?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (provider, id) DO UPDATE SET
+       number = excluded.number,
+       title = excluded.title,
+       summary = excluded.summary,
+       homepage = excluded.homepage,
+       director = excluded.director,
+       actors = excluded.actors,
+       thumb_url = excluded.thumb_url,
+       cover_url = excluded.cover_url,
+       ${bigSet}preview_video_url = excluded.preview_video_url,
+       preview_video_hls_url = excluded.preview_video_hls_url,
+       preview_images = excluded.preview_images,
+       maker = excluded.maker,
+       label = excluded.label,
+       series = excluded.series,
+       genres = excluded.genres,
+       score = excluded.score,
+       runtime = excluded.runtime,
+       release_date = excluded.release_date,
+       updated_at = excluded.updated_at`
+  );
+  const binds = [
     info.provider,
     info.id,
     info.number,
@@ -1943,7 +1957,10 @@ async function saveMovieInfoToDB(db2, info) {
     info.director,
     JSON.stringify(info.actors),
     info.thumb_url,
-    info.cover_url,
+    info.cover_url
+  ];
+  if (withBigThumb) binds.push(info.big_thumb_url);
+  binds.push(
     info.preview_video_url,
     info.preview_video_hls_url,
     JSON.stringify(info.preview_images),
@@ -1956,9 +1973,10 @@ async function saveMovieInfoToDB(db2, info) {
     info.release_date,
     now,
     now
-  ).run();
+  );
+  await stmt.bind(...binds).run();
 }
-__name(saveMovieInfoToDB, "saveMovieInfoToDB");
+__name(insertMovieInfo, "insertMovieInfo");
 async function searchMovieFromDB(db2, keyword, providerName) {
   const scoped = providerName !== void 0;
   const stmt = scoped ? db2.prepare(
@@ -2238,10 +2256,27 @@ var FanzaProvider = class {
     }
     return this.finishInfo(data, normalized);
   }
-  finishInfo(data, normalized) {
+  async finishInfo(data, normalized) {
     const info = mapContentToMovieInfo(data);
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${normalized}`, "not_found");
+    }
+    if (!info.big_thumb_url && info.thumb_url) {
+      try {
+        const head = await fetch(info.thumb_url, {
+          method: "HEAD",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+          },
+          signal: AbortSignal.timeout(4e3)
+        });
+        const type = head.headers.get("content-type") ?? "";
+        const size = Number(head.headers.get("content-length") ?? 0);
+        if (type.startsWith("image/") && size > 100 * 1024) {
+          info.big_thumb_url = info.thumb_url;
+        }
+      } catch {
+      }
     }
     return info;
   }
@@ -2311,6 +2346,7 @@ var FanzaProvider = class {
         actors: product.casts ?? [],
         thumb_url: product.thumbnail_image_url,
         cover_url: previewSrc(product.thumbnail_image_url),
+        big_thumb_url: "",
         score: product.rate ?? 0,
         release_date: parseSearchReleaseDate(product.release_announcement ?? "")
       });
@@ -2379,6 +2415,7 @@ function mapContentToMovieInfo(data) {
     actors: [],
     thumb_url: c.packageImage?.mediumUrl ?? "",
     cover_url: c.packageImage?.largeUrl ?? "",
+    big_thumb_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -2581,6 +2618,7 @@ async function parseJavbusPage(resp, pageURL, id) {
     actors: [],
     thumb_url: "",
     cover_url: "",
+    big_thumb_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -2788,6 +2826,7 @@ async function parseJavbusSearchPage(resp, pageURL) {
       actors: [],
       thumb_url: card.thumb,
       cover_url: cover,
+      big_thumb_url: "",
       score: 0,
       release_date: card.release
     };
@@ -2899,6 +2938,7 @@ function movieInfoFromWork(work) {
     actors: [],
     thumb_url: "",
     cover_url: "",
+    big_thumb_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -2952,6 +2992,7 @@ function searchResultsFromWorks(works) {
       actors: (work.actors ?? []).map((a) => a.name).filter(Boolean),
       thumb_url: chosen.thumbnail_url ?? "",
       cover_url: chosen.image_url ?? "",
+      big_thumb_url: "",
       score: 0,
       release_date: parseAvbaseDate(work.min_date)
     };
@@ -3689,6 +3730,7 @@ function baseMovieInfo(provider, id, homepage) {
     actors: [],
     thumb_url: "",
     cover_url: "",
+    big_thumb_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -4460,6 +4502,7 @@ function makeFalenoProvider(cfg) {
           actors: [],
           thumb_url: "",
           cover_url: card.cover ? absURL(url, card.cover) : "",
+          big_thumb_url: "",
           score: 0,
           release_date: parseDateLoose(card.dateText)
         };
@@ -5208,6 +5251,7 @@ var tokyohotProvider = {
         actors: [],
         thumb_url: img,
         cover_url: img,
+        big_thumb_url: "",
         score: 0,
         release_date: ""
       };
@@ -5376,6 +5420,7 @@ var madouquProvider = {
         actors: [],
         thumb_url: thumb,
         cover_url: thumb,
+        big_thumb_url: "",
         score: 0,
         release_date: ""
       };
@@ -5901,6 +5946,7 @@ async function parseMgsSearch(html, pageURL) {
       homepage,
       thumb_url: img ? mgsImageSrc(img, true) : "",
       cover_url: img ? mgsImageSrc(img, false) : "",
+      big_thumb_url: "",
       score: parseScore(c.review),
       actors: [],
       release_date: ""
@@ -6178,6 +6224,7 @@ async function parseAveSearch(html, pageURL) {
       actors: [],
       thumb_url: thumb,
       cover_url: thumb.replaceAll("jacket_images", "bigcover"),
+      big_thumb_url: "",
       score: 0,
       release_date: ""
     });
@@ -6446,6 +6493,7 @@ async function parseSodSearch(html, pageURL) {
       actors: [],
       thumb_url: thumb,
       cover_url: thumb.replaceAll("_m.jpg", "_l.jpg"),
+      big_thumb_url: "",
       score: 0,
       release_date: parseDateLoose(c.release)
     });
@@ -6614,6 +6662,7 @@ async function parseJavfreeSearch(html, pageURL, fc2ID) {
       actors: [],
       thumb_url: thumb,
       cover_url: base ? `https://cf.javfree.me/HLIC/${base}` : "",
+      big_thumb_url: "",
       score: 0,
       release_date: ""
     });

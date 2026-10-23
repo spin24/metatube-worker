@@ -209,6 +209,7 @@ export const madouquProvider: MovieProvider & {
         actors: [],
         thumb_url: thumb,
         cover_url: thumb,
+        big_thumb_url: "",
         score: 0,
         release_date: "",
       };

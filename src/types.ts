@@ -12,6 +12,7 @@ export interface MovieInfo {
   actors: string[];
   thumb_url: string;
   cover_url: string;
+  big_thumb_url: string;
   preview_video_url: string;
   preview_video_hls_url: string;
   preview_images: string[];
@@ -49,6 +50,7 @@ export interface MovieSearchResult {
   actors: string[];
   thumb_url: string;
   cover_url: string;
+  big_thumb_url: string;
   score: number;
   /** YYYY-MM-DD or "" */
   release_date: string;
@@ -68,6 +70,7 @@ export function movieInfoToSearchResult(info: MovieInfo): MovieSearchResult {
     actors: info.actors,
     thumb_url: info.thumb_url,
     cover_url: info.cover_url,
+    big_thumb_url: info.big_thumb_url,
     score: info.score,
     release_date: info.release_date,
   };

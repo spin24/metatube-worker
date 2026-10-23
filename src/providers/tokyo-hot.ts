@@ -223,6 +223,7 @@ export const tokyohotProvider: MovieProvider & {
         actors: [],
         thumb_url: img,
         cover_url: img,
+        big_thumb_url: "",
         score: 0,
         release_date: "",
       };

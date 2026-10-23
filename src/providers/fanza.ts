@@ -9,9 +9,11 @@
 // Mono URLs are still accepted — their cid is extracted and resolved through
 // the digital API, which covers the same content in the vast majority of cases.
 //
-// Deliberately dropped vs. the Go version (image pipeline):
-//   - big-thumb probing (fetches image bytes to measure size)
-//   - AWS image-src upgrading / preview-src maximizing
+// Partially dropped vs. the Go version (image pipeline):
+//   - big-thumb promotion by perceptual hash (goimagehash) — dropped.
+//   - The big-thumb SIZE check is implemented (a HEAD request reading
+//     Content-Length only; no image bytes are processed).
+//   - AWS image-src upgrading / preview-src maximizing — dropped.
 // Image URLs are passed through exactly as FANZA returns them.
 
 import {
@@ -173,10 +175,36 @@ export class FanzaProvider implements MovieProvider {
     return this.finishInfo(data, normalized);
   }
 
-  private finishInfo(data: ContentPageData, normalized: string): MovieInfo {
+  private async finishInfo(data: ContentPageData, normalized: string): Promise<MovieInfo> {
     const info = mapContentToMovieInfo(data);
     if (!isValidMovieInfo(info)) {
       throw new ProviderError(`incomplete metadata: ${normalized}`, "not_found");
+    }
+    // Big thumb (Go parity, size-check branch): if the thumb image is
+    // large enough to be a poster-grade file (>100 KiB by its
+    // Content-Length), it doubles as the big thumb. On DMM's AWS host
+    // the "ps" thumb IS the 1032x1468 portrait poster, so this is the
+    // branch that fires in practice. Go's second branch — promoting
+    // preview_images[0] when a perceptual hash matches the thumb —
+    // needs goimagehash and stays unported (image pipeline).
+    if (!info.big_thumb_url && info.thumb_url) {
+      try {
+        const head = await fetch(info.thumb_url, {
+          method: "HEAD",
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          },
+          signal: AbortSignal.timeout(4000),
+        });
+        const type = head.headers.get("content-type") ?? "";
+        const size = Number(head.headers.get("content-length") ?? 0);
+        if (type.startsWith("image/") && size > 100 * 1024) {
+          info.big_thumb_url = info.thumb_url;
+        }
+      } catch {
+        // best-effort only
+      }
     }
     return info;
   }
@@ -259,6 +287,7 @@ export class FanzaProvider implements MovieProvider {
         actors: product.casts ?? [],
         thumb_url: product.thumbnail_image_url,
         cover_url: previewSrc(product.thumbnail_image_url),
+        big_thumb_url: "",
         score: product.rate ?? 0,
         release_date: parseSearchReleaseDate(product.release_announcement ?? ""),
       });
@@ -339,6 +368,7 @@ function mapContentToMovieInfo(data: ContentPageData): MovieInfo {
     actors: [],
     thumb_url: c.packageImage?.mediumUrl ?? "",
     cover_url: c.packageImage?.largeUrl ?? "",
+    big_thumb_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],

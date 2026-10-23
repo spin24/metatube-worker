@@ -181,6 +181,7 @@ export async function parseSodSearch(html: string, pageURL: string): Promise<Mov
       actors: [],
       thumb_url: thumb,
       cover_url: thumb.replaceAll("_m.jpg", "_l.jpg"),
+      big_thumb_url: "",
       score: 0,
       release_date: parseDateLoose(c.release),
     });

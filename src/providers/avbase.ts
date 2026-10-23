@@ -99,6 +99,7 @@ export function movieInfoFromWork(work: AvbaseWork): MovieInfo {
     actors: [],
     thumb_url: "",
     cover_url: "",
+    big_thumb_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -153,6 +154,7 @@ export function searchResultsFromWorks(works: AvbaseWork[]): MovieSearchResult[]
       actors: (work.actors ?? []).map((a) => a.name).filter(Boolean),
       thumb_url: chosen.thumbnail_url ?? "",
       cover_url: chosen.image_url ?? "",
+      big_thumb_url: "",
       score: 0,
       release_date: parseAvbaseDate(work.min_date),
     };

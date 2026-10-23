@@ -213,6 +213,7 @@ export function makeFalenoProvider(cfg: FalenoConfig): MovieProvider & {
           actors: [],
           thumb_url: "",
           cover_url: card.cover ? absURL(url, card.cover) : "",
+          big_thumb_url: "",
           score: 0,
           release_date: parseDateLoose(card.dateText),
         };

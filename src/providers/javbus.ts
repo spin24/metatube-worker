@@ -109,6 +109,7 @@ export async function parseJavbusPage(
     actors: [],
     thumb_url: "",
     cover_url: "",
+    big_thumb_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -376,6 +377,7 @@ export async function parseJavbusSearchPage(
       actors: [],
       thumb_url: card.thumb,
       cover_url: cover,
+      big_thumb_url: "",
       score: 0,
       release_date: card.release,
     };
