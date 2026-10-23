@@ -123,12 +123,22 @@ export class FanzaProvider implements MovieProvider {
 
   normalizeMovieID(id: string): string {
     const t = id.trim().toLowerCase(); // FANZA uses lowercase IDs
-    // Maker numbers (ROYD-369) and mono cids (royd369) address the
-    // same work as the digital cid (royd00369): lowercase label +
-    // digits zero-padded to 5. Without this, number-style IDs went
-    // into the GraphQL query verbatim and found nothing, so clients
-    // fell back to the sparse mono search hit. Already-digital IDs
-    // are idempotent; non-matching shapes pass through untouched.
+    // Identity semantics (this is also the D1 cache key): a dashed
+    // maker number (ROYD-369) canonicalizes to the padded digital
+    // cid (royd00369). Undashed forms pass through as their own
+    // identity — an unpadded cid (royd369) is the mono edition's
+    // id and a padded cid (royd00369) the digital edition's; they
+    // are distinct records with distinct keys, as in Go.
+    const m = /^([a-z]+)-(\d+)$/.exec(t);
+    if (m) {
+      return m[1] + m[2].padStart(5, "0");
+    }
+    return t;
+  }
+
+  /** Pad a maker number / mono cid to the digital cid form. */
+  private padDigitalCid(id: string): string {
+    const t = id.trim().toLowerCase();
     const m = /^([a-z]+)-?(\d+)$/.exec(t);
     if (m) {
       return m[1] + m[2].padStart(5, "0");
@@ -145,7 +155,7 @@ export class FanzaProvider implements MovieProvider {
     }
     if (url.hostname === "video.dmm.co.jp") {
       const id = url.searchParams.get("id");
-      return id ? this.normalizeMovieID(id) : null;
+      return id ? this.padDigitalCid(id) : null;
     }
     const m = /\/cid=(.*?)\//.exec(url.pathname);
     if (m) {
@@ -178,7 +188,7 @@ export class FanzaProvider implements MovieProvider {
     // Synthesis only when the work actually resolved through the
     // padded digital cid — never invent a record for a phantom.
     const raw = id.trim().toLowerCase();
-    const padded = this.normalizeMovieID(raw);
+    const padded = this.padDigitalCid(raw);
     if (/^[a-z]+\d+$/.test(raw) && raw !== padded && info.id === padded) {
       const pl = `https://pics.dmm.co.jp/mono/movie/adult/${raw}/${raw}pl.jpg`;
       return {
@@ -195,7 +205,7 @@ export class FanzaProvider implements MovieProvider {
   }
 
   private async getDigitalInfoByID(id: string): Promise<MovieInfo> {
-    const normalized = this.normalizeMovieID(id);
+    const normalized = this.padDigitalCid(id);
     if (!normalized) {
       throw new ProviderError("invalid id", "invalid");
     }

@@ -2218,6 +2218,15 @@ var FanzaProvider = class {
   priority = 1001;
   normalizeMovieID(id) {
     const t = id.trim().toLowerCase();
+    const m = /^([a-z]+)-(\d+)$/.exec(t);
+    if (m) {
+      return m[1] + m[2].padStart(5, "0");
+    }
+    return t;
+  }
+  /** Pad a maker number / mono cid to the digital cid form. */
+  padDigitalCid(id) {
+    const t = id.trim().toLowerCase();
     const m = /^([a-z]+)-?(\d+)$/.exec(t);
     if (m) {
       return m[1] + m[2].padStart(5, "0");
@@ -2233,7 +2242,7 @@ var FanzaProvider = class {
     }
     if (url.hostname === "video.dmm.co.jp") {
       const id = url.searchParams.get("id");
-      return id ? this.normalizeMovieID(id) : null;
+      return id ? this.padDigitalCid(id) : null;
     }
     const m = /\/cid=(.*?)\//.exec(url.pathname);
     if (m) {
@@ -2244,7 +2253,7 @@ var FanzaProvider = class {
   async getMovieInfoByID(id) {
     const info = await this.getDigitalInfoByID(id);
     const raw2 = id.trim().toLowerCase();
-    const padded = this.normalizeMovieID(raw2);
+    const padded = this.padDigitalCid(raw2);
     if (/^[a-z]+\d+$/.test(raw2) && raw2 !== padded && info.id === padded) {
       const pl = `https://pics.dmm.co.jp/mono/movie/adult/${raw2}/${raw2}pl.jpg`;
       return {
@@ -2260,7 +2269,7 @@ var FanzaProvider = class {
     return info;
   }
   async getDigitalInfoByID(id) {
-    const normalized = this.normalizeMovieID(id);
+    const normalized = this.padDigitalCid(id);
     if (!normalized) {
       throw new ProviderError("invalid id", "invalid");
     }
