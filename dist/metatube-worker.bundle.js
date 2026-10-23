@@ -1925,7 +1925,7 @@ async function insertMovieInfo(db2, info, withBigThumb) {
        thumb_url, cover_url, ${bigCols}preview_video_url, preview_video_hls_url,
        preview_images, maker, label, series, genres, score, runtime,
        release_date, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${bigVals}?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${bigVals}?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (provider, id) DO UPDATE SET
        number = excluded.number,
        title = excluded.title,
