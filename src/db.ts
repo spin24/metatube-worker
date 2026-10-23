@@ -49,6 +49,9 @@ function rowToMovieInfo(row: MovieRow): MovieInfo {
     thumb_url: row.thumb_url,
     cover_url: row.cover_url,
     big_thumb_url: row.big_thumb_url ?? "",
+    // Present in Go's model (set only by its mono image handler);
+    // our providers never produce one, so it is not persisted.
+    big_cover_url: "",
     preview_video_url: row.preview_video_url,
     preview_video_hls_url: row.preview_video_hls_url,
     preview_images: JSON.parse(row.preview_images) as string[],

@@ -13,6 +13,7 @@ export interface MovieInfo {
   thumb_url: string;
   cover_url: string;
   big_thumb_url: string;
+  big_cover_url: string;
   preview_video_url: string;
   preview_video_hls_url: string;
   preview_images: string[];

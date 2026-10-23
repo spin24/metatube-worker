@@ -369,6 +369,7 @@ function mapContentToMovieInfo(data: ContentPageData): MovieInfo {
     thumb_url: c.packageImage?.mediumUrl ?? "",
     cover_url: c.packageImage?.largeUrl ?? "",
     big_thumb_url: "",
+    big_cover_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],

@@ -117,6 +117,7 @@ export function baseMovieInfo(provider: string, id: string, homepage: string): M
     thumb_url: "",
     cover_url: "",
     big_thumb_url: "",
+    big_cover_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],

@@ -101,8 +101,30 @@ for (const p of [
   providers.set(p.name.toUpperCase(), p);
 }
 
-function getProvider(name: string): MovieProvider {
-  const provider = providers.get(name.toUpperCase());
+// Go's API emits its datatypes.Date fields (release_date, birthday,
+// debut_date) as RFC 3339 timestamps. Internally we keep date-only
+// strings; convert on the way out so clients with strict date
+// parsers see the same wire format as the Go server.
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const asTimestamp = (d: string): string => (DATE_ONLY_RE.test(d) ? `${d}T00:00:00Z` : d);
+
+function movieInfoJSON(info: MovieInfo): MovieInfo {
+  return { ...info, release_date: asTimestamp(info.release_date) };
+}
+
+function movieSearchJSON(result: MovieSearchResult): MovieSearchResult {
+  return { ...result, release_date: asTimestamp(result.release_date) };
+}
+
+function actorInfoJSON(info: ActorInfo): ActorInfo {
+  return {
+    ...info,
+    birthday: asTimestamp(info.birthday),
+    debut_date: asTimestamp(info.debut_date),
+  };
+}
+
+function getProvider(name: string): MovieProvider {  const provider = providers.get(name.toUpperCase());
   if (!provider) {
     throw new ProviderError(`provider not found: ${name}`, "not_found");
   }
@@ -557,23 +579,23 @@ app.get("/v1/movies/search", async (c) => {
     const id = provider?.parseMovieIDFromURL(q);
     if (provider && id) {
       const info = await getMovieInfo(c.env, provider, id, true);
-      return c.json({ data: [movieInfoToSearchResult(info)] });
+      return c.json({ data: [movieSearchJSON(movieInfoToSearchResult(info))] });
     }
     throw new ProviderError(`unsupported url: ${q}`, "not_found");
   }
   const providerName = c.req.query("provider");
   if (providerName) {
     const provider = getProvider(providerName);
-    return c.json({ data: await searchSingleProvider(c.env, provider, q, fallback) });
+    return c.json({ data: (await searchSingleProvider(c.env, provider, q, fallback)).map(movieSearchJSON) });
   }
-  return c.json({ data: await searchAllProviders(c.env, q, fallback) });
+  return c.json({ data: (await searchAllProviders(c.env, q, fallback)).map(movieSearchJSON) });
 });
 
 app.get("/v1/movies/:provider/:id", async (c) => {
   const provider = getProvider(c.req.param("provider"));
   const lazy = c.req.query("lazy") !== "false";
   const info = await getMovieInfo(c.env, provider, c.req.param("id"), lazy);
-  return c.json({ data: info });
+  return c.json({ data: movieInfoJSON(info) });
 });
 
 app.post("/v1/movies/:provider/lookup", async (c) => {
@@ -588,7 +610,7 @@ app.post("/v1/movies/:provider/lookup", async (c) => {
   }
   const lazy = c.req.query("lazy") !== "false";
   const info = await getMovieInfo(c.env, provider, id, lazy);
-  return c.json({ data: info });
+  return c.json({ data: movieInfoJSON(info) });
 });
 
 app.get("/v1/actors/search", async (c) => {
@@ -618,7 +640,7 @@ app.get("/v1/actors/:provider/:id", async (c) => {
   const provider = getActorProvider(c.req.param("provider"));
   const lazy = c.req.query("lazy") !== "false";
   const info = await getActorInfo(c.env, provider, c.req.param("id"), lazy);
-  return c.json({ data: info });
+  return c.json({ data: actorInfoJSON(info) });
 });
 
 app.post("/v1/actors/:provider/lookup", async (c) => {
@@ -633,7 +655,7 @@ app.post("/v1/actors/:provider/lookup", async (c) => {
   }
   const lazy = c.req.query("lazy") !== "false";
   const info = await getActorInfo(c.env, provider, id, lazy);
-  return c.json({ data: info });
+  return c.json({ data: actorInfoJSON(info) });
 });
 
 // Manual trigger for the same sync the Cron Trigger runs — used

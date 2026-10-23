@@ -110,6 +110,7 @@ export async function parseJavbusPage(
     thumb_url: "",
     cover_url: "",
     big_thumb_url: "",
+    big_cover_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],

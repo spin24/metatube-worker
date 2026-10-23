@@ -1888,6 +1888,9 @@ function rowToMovieInfo(row) {
     thumb_url: row.thumb_url,
     cover_url: row.cover_url,
     big_thumb_url: row.big_thumb_url ?? "",
+    // Present in Go's model (set only by its mono image handler);
+    // our providers never produce one, so it is not persisted.
+    big_cover_url: "",
     preview_video_url: row.preview_video_url,
     preview_video_hls_url: row.preview_video_hls_url,
     preview_images: JSON.parse(row.preview_images),
@@ -2416,6 +2419,7 @@ function mapContentToMovieInfo(data) {
     thumb_url: c.packageImage?.mediumUrl ?? "",
     cover_url: c.packageImage?.largeUrl ?? "",
     big_thumb_url: "",
+    big_cover_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -2619,6 +2623,7 @@ async function parseJavbusPage(resp, pageURL, id) {
     thumb_url: "",
     cover_url: "",
     big_thumb_url: "",
+    big_cover_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -2939,6 +2944,7 @@ function movieInfoFromWork(work) {
     thumb_url: "",
     cover_url: "",
     big_thumb_url: "",
+    big_cover_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -3731,6 +3737,7 @@ function baseMovieInfo(provider, id, homepage) {
     thumb_url: "",
     cover_url: "",
     big_thumb_url: "",
+    big_cover_url: "",
     preview_video_url: "",
     preview_video_hls_url: "",
     preview_images: [],
@@ -7039,6 +7046,24 @@ for (const p of [
 ]) {
   providers.set(p.name.toUpperCase(), p);
 }
+var DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+var asTimestamp = /* @__PURE__ */ __name((d) => DATE_ONLY_RE.test(d) ? `${d}T00:00:00Z` : d, "asTimestamp");
+function movieInfoJSON(info) {
+  return { ...info, release_date: asTimestamp(info.release_date) };
+}
+__name(movieInfoJSON, "movieInfoJSON");
+function movieSearchJSON(result) {
+  return { ...result, release_date: asTimestamp(result.release_date) };
+}
+__name(movieSearchJSON, "movieSearchJSON");
+function actorInfoJSON(info) {
+  return {
+    ...info,
+    birthday: asTimestamp(info.birthday),
+    debut_date: asTimestamp(info.debut_date)
+  };
+}
+__name(actorInfoJSON, "actorInfoJSON");
 function getProvider(name) {
   const provider = providers.get(name.toUpperCase());
   if (!provider) {
@@ -7399,22 +7424,22 @@ app.get("/v1/movies/search", async (c) => {
     const id = provider?.parseMovieIDFromURL(q);
     if (provider && id) {
       const info = await getMovieInfo(c.env, provider, id, true);
-      return c.json({ data: [movieInfoToSearchResult(info)] });
+      return c.json({ data: [movieSearchJSON(movieInfoToSearchResult(info))] });
     }
     throw new ProviderError(`unsupported url: ${q}`, "not_found");
   }
   const providerName = c.req.query("provider");
   if (providerName) {
     const provider = getProvider(providerName);
-    return c.json({ data: await searchSingleProvider(c.env, provider, q, fallback) });
+    return c.json({ data: (await searchSingleProvider(c.env, provider, q, fallback)).map(movieSearchJSON) });
   }
-  return c.json({ data: await searchAllProviders(c.env, q, fallback) });
+  return c.json({ data: (await searchAllProviders(c.env, q, fallback)).map(movieSearchJSON) });
 });
 app.get("/v1/movies/:provider/:id", async (c) => {
   const provider = getProvider(c.req.param("provider"));
   const lazy = c.req.query("lazy") !== "false";
   const info = await getMovieInfo(c.env, provider, c.req.param("id"), lazy);
-  return c.json({ data: info });
+  return c.json({ data: movieInfoJSON(info) });
 });
 app.post("/v1/movies/:provider/lookup", async (c) => {
   const provider = getProvider(c.req.param("provider"));
@@ -7428,7 +7453,7 @@ app.post("/v1/movies/:provider/lookup", async (c) => {
   }
   const lazy = c.req.query("lazy") !== "false";
   const info = await getMovieInfo(c.env, provider, id, lazy);
-  return c.json({ data: info });
+  return c.json({ data: movieInfoJSON(info) });
 });
 app.get("/v1/actors/search", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
@@ -7456,7 +7481,7 @@ app.get("/v1/actors/:provider/:id", async (c) => {
   const provider = getActorProvider(c.req.param("provider"));
   const lazy = c.req.query("lazy") !== "false";
   const info = await getActorInfo(c.env, provider, c.req.param("id"), lazy);
-  return c.json({ data: info });
+  return c.json({ data: actorInfoJSON(info) });
 });
 app.post("/v1/actors/:provider/lookup", async (c) => {
   const provider = getActorProvider(c.req.param("provider"));
@@ -7470,7 +7495,7 @@ app.post("/v1/actors/:provider/lookup", async (c) => {
   }
   const lazy = c.req.query("lazy") !== "false";
   const info = await getActorInfo(c.env, provider, id, lazy);
-  return c.json({ data: info });
+  return c.json({ data: actorInfoJSON(info) });
 });
 app.post("/admin/gfriends/sync", async (c) => {
   requireAdminKey(c);
