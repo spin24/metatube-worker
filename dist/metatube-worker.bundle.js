@@ -2237,11 +2237,29 @@ var FanzaProvider = class {
     }
     const m = /\/cid=(.*?)\//.exec(url.pathname);
     if (m) {
-      return this.normalizeMovieID(m[1]);
+      return m[1].trim().toLowerCase();
     }
     return null;
   }
   async getMovieInfoByID(id) {
+    const info = await this.getDigitalInfoByID(id);
+    const raw2 = id.trim().toLowerCase();
+    const padded = this.normalizeMovieID(raw2);
+    if (/^[a-z]+\d+$/.test(raw2) && raw2 !== padded && info.id === padded) {
+      const pl = `https://pics.dmm.co.jp/mono/movie/adult/${raw2}/${raw2}pl.jpg`;
+      return {
+        ...info,
+        id: raw2,
+        homepage: `https://www.dmm.co.jp/mono/dvd/-/detail/=/cid=${raw2}/`,
+        thumb_url: pl,
+        cover_url: pl,
+        big_thumb_url: "",
+        big_cover_url: ""
+      };
+    }
+    return info;
+  }
+  async getDigitalInfoByID(id) {
     const normalized = this.normalizeMovieID(id);
     if (!normalized) {
       throw new ProviderError("invalid id", "invalid");

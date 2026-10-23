@@ -149,12 +149,52 @@ export class FanzaProvider implements MovieProvider {
     }
     const m = /\/cid=(.*?)\//.exec(url.pathname);
     if (m) {
-      return this.normalizeMovieID(m[1]);
+      // Mono cid, returned raw (lowercase only, like Go): the mono
+      // form is a distinct edition identity, and getMovieInfoByID
+      // decides what to do with it. Do not pad it here.
+      return m[1].trim().toLowerCase();
     }
     return null;
   }
 
   async getMovieInfoByID(id: string): Promise<MovieInfo> {
+    const info = await this.getDigitalInfoByID(id);
+    // Mono-shaped record for unpadded cids (jur897, snos413, ...).
+    //
+    // Go resolves these from the mono (DVD) product page and
+    // returns a mono record: same work, DVD edition — mono id,
+    // mono homepage, the mono package image as thumb/cover, DVD
+    // runtime and release date. That page is region-gated for
+    // Workers egress (302 to not-available-in-your-region, empty
+    // body), so the page itself can never be scraped from here.
+    // What a mono record uniquely carries is its identity shell,
+    // and that shell is a fixed URL template; every content field
+    // (title, summary, cast, maker, genres, previews, trailer) is
+    // the same work's data, which the digital record already has.
+    // So: keep the digital record's content and re-dress it with
+    // the mono identity. Known deviations from a true mono
+    // record: runtime and release_date stay the digital edition's
+    // values (a DVD can differ by a few minutes / a later date).
+    // Synthesis only when the work actually resolved through the
+    // padded digital cid — never invent a record for a phantom.
+    const raw = id.trim().toLowerCase();
+    const padded = this.normalizeMovieID(raw);
+    if (/^[a-z]+\d+$/.test(raw) && raw !== padded && info.id === padded) {
+      const pl = `https://pics.dmm.co.jp/mono/movie/adult/${raw}/${raw}pl.jpg`;
+      return {
+        ...info,
+        id: raw,
+        homepage: `https://www.dmm.co.jp/mono/dvd/-/detail/=/cid=${raw}/`,
+        thumb_url: pl,
+        cover_url: pl,
+        big_thumb_url: "",
+        big_cover_url: "",
+      };
+    }
+    return info;
+  }
+
+  private async getDigitalInfoByID(id: string): Promise<MovieInfo> {
     const normalized = this.normalizeMovieID(id);
     if (!normalized) {
       throw new ProviderError("invalid id", "invalid");
